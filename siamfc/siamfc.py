@@ -210,8 +210,8 @@ class TrackerSiamFC(Tracker):
         # print(tmp,tmp.shape)
         result = self.predictnet.test(tmp, flag=1)
         result = result.detach().cpu().numpy()
-        # scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
-        scale = (result[0]+result[1])/2
+        scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
+        # scale = (result[0]+result[1])/2
         print(result)
         # for i in range(2):
         #     self.target_sz[i] *= result[i]
