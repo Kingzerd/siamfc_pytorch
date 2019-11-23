@@ -16,6 +16,8 @@ class Rnn(nn.Module):
         self.cuda = torch.cuda.is_available()
         self.device = torch.device('cuda:0' if self.cuda else 'cpu')
 
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
         self.rnn = nn.RNN(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -25,13 +27,15 @@ class Rnn(nn.Module):
 
         self.out = nn.Linear(hidden_size, out_scale)
 
-    def forward(self, x, h_state):
-        r_out, h_state = self.rnn(x, h_state)
+    def forward(self, x, h_state=None):
+        h = torch.autograd.Variable(torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda())
+        # c0 = Variable(torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda())
+        r_out, h_state = self.rnn(x, h)
 
         outs = []
         for time in range(r_out.size(1)):
             outs.append(self.out(r_out[:, time, :]))
-        return torch.stack(outs, dim=1), h_state
+        return torch.stack(outs, dim=1)[:, -1], h_state
 
 
 class PredictNet(nn.Module):
@@ -63,15 +67,15 @@ class PredictNet(nn.Module):
         # default parameters
         cfg = {
             # basic parameters
-            'input_size': 4,
+            'input_size': 17,
             'hidden_size': 32,
             'num_layers': 1,
             'batch_first': True,
             'out_scale': 2,
-            'learning_rate': 0.02,
-            'time_step': 5,
+            'learning_rate': 0.01,
+            'time_step': 17,
             'batch_size': 1,
-            'epoch_num': 5000}
+            'epoch_num': 2000}
 
         for key, val in kwargs.items():
             if key in cfg:
@@ -84,65 +88,29 @@ class PredictNet(nn.Module):
 
         h_state = None
         losses = []
-
-        # for step in range(self.cfg.epoch_num):
-        #     start, end = step * np.pi, (step + 1) * np.pi
-        #
-        #     steps = np.linspace(start, end, self.cfg.time_step, dtype=np.float32)
-        #     x_np = np.sin(steps)
-        #     y_np = np.cos(steps)
-        #
-        #     x = torch.from_numpy(x_np[np.newaxis, :, np.newaxis]).to(self.device)
-        #     y = torch.from_numpy(y_np[np.newaxis, :, np.newaxis]).to(self.device)
-        #
-        #     prediction, h_state = self.net(x, h_state)
-        #     h_state = h_state.detach()
-        #
-        #     loss = self.loss_func(prediction, y)
-        #     losses.append(loss.item())
-        #     self.optimizer.zero_grad()
-        #     loss.backward()
-        #     self.optimizer.step()
-
         count = 0
-        flag1 = 0
-        flag2 = 0
-        path = 'H:/datasets/OTB100/'
-        for k in range(1000):
-            for j in os.listdir(path):
-                if j == 'Jogging':
-                    break
-                cur = path + j
-                print(cur)
-                timeDataset = TimeDataset(cur)
-                train_loader = DataLoader(dataset=timeDataset,
-                                          batch_size=self.cfg.batch_size,
-                                          shuffle=False)
-                for i, data in enumerate(train_loader):
-                    if count == self.cfg.epoch_num:
-                        flag2 = 1
-                        flag1 = 1
-                        break
-                    count += 1
-                    inputs, labels = data
-                    # print(labels.shape)
-                    if (labels.shape[0] != self.cfg.batch_size):
-                        count -= 1
-                        continue
-                    x = inputs.to(self.device)
-                    y = labels.to(self.device)
-                    prediction, h_state = self.net(x, h_state)
-                    h_state = h_state.detach()
 
-                    loss = self.loss_func(prediction, y)
-                    losses.append(loss.item())
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    self.optimizer.step()
-                if flag1 == 1:
-                    break
-            if flag2 == 1:
+        timeDataset = TimeDataset()
+        train_loader = DataLoader(dataset=timeDataset,
+                                  batch_size=self.cfg.batch_size,
+                                  shuffle=False)
+        # print(len(train_loader))
+        for i, data in enumerate(train_loader):
+            if count == self.cfg.epoch_num:
                 break
+            count += 1
+            inputs, labels = data
+            x = inputs.to(self.device)
+            y = labels.to(self.device)
+            prediction, h_state = self.net(x, h_state)
+            h_state = h_state.detach()
+            # print(prediction)
+
+            loss = self.loss_func(prediction, y)
+            losses.append(loss.item())
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
         # timeDataset = TimeDataset()
         # train_loader = DataLoader(dataset=timeDataset,
@@ -199,6 +167,6 @@ class PredictNet(nn.Module):
         h_state = state
         prediction, h_state = self.net(x, h_state)
         if (flag == 0):
-            return prediction[0][0],h_state
+            return prediction[0][:],h_state
         else:
-            return prediction[0][-1],h_state
+            return prediction[0][:],h_state

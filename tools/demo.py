@@ -19,5 +19,5 @@ if __name__ == '__main__':
         img_files = sorted(glob.glob(seq_dir + '/img/*.jpg'))
         anno = np.loadtxt(seq_dir + '/groundtruth_rect.txt', delimiter=',')
 
-        tracker.track(img_files, anno[0], visualize=False, rnn_flag=0, feature_flag=0)
-    tracker.write_feature()
+        tracker.track(img_files, anno[0], visualize=True, rnn_flag=1, feature_flag=0)
+    # tracker.write_feature()

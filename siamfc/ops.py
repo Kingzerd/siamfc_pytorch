@@ -30,7 +30,7 @@ def read_image(img_file, cvt_code=cv2.COLOR_BGR2RGB):
 
 
 def show_image(img, boxes=None, box_fmt='ltwh', colors=None,
-               thickness=3, fig_n=1, delay=1, visualize=True,
+               thickness=3, fig_n=1, delay=0, visualize=True,
                cvt_code=cv2.COLOR_RGB2BGR):
     if cvt_code is not None:
         img = cv2.cvtColor(img, cvt_code)

@@ -119,10 +119,10 @@ class TrackerSiamFC(Tracker):
 
         self.history = []
         self.h_state = None
-        # self.feature_count = 0
+        self.feature_count = 0
         for i in range(self.cfg.time_step):
             self.history.append(box)
-        net_path = '../timeseries/pretrained/predictnet_e5000.pth'
+        net_path = '../timeseries/pretrained/predictnet_e2000.pth'
         self.predictnet = PredictNet(net_path=net_path)
 
         # convert box to 0-indexed and center based [y, x, h, w]
@@ -182,9 +182,9 @@ class TrackerSiamFC(Tracker):
         responses = self.net.head(self.kernel, x)
         responses = responses.squeeze(1).cpu().numpy()
 
-        # initials = responses.copy()
-        # initials[:self.cfg.scale_num // 2] *= self.cfg.scale_penalty
-        # initials[self.cfg.scale_num // 2 + 1:] *= self.cfg.scale_penalty
+        initials = responses.copy()
+        initials[:self.cfg.scale_num // 2] *= self.cfg.scale_penalty
+        initials[self.cfg.scale_num // 2 + 1:] *= self.cfg.scale_penalty
 
         # upsample responses and penalize scale changes
         responses = np.stack([cv2.resize(
@@ -205,12 +205,12 @@ class TrackerSiamFC(Tracker):
         response = (1 - self.cfg.window_influence) * response + \
                    self.cfg.window_influence * self.hann_window
 
-        # print(response.shape)
-        # initial = initials[scale_id]
-        # initial -= initial.min()
-        # initial /= initial.sum() + 1e-16
-        # self.feature.append(initial)
-        # self.feature_count += 1
+        print(response.shape)
+        initial = initials[scale_id]
+        initial -= initial.min()
+        initial /= initial.sum() + 1e-16
+        self.feature.append(initial)
+        self.feature_count += 1
 
         loc = np.unravel_index(response.argmax(), response.shape)
 
@@ -225,8 +225,9 @@ class TrackerSiamFC(Tracker):
             tmp = np.array(self.history, dtype=np.float32)
             tmp = tmp[np.newaxis, :]
             # print(tmp,tmp.shape)
-            result, self.h_state = self.predictnet.test(tmp, self.h_state, flag=1)
+            result, self.h_state = self.predictnet.test(initial[np.newaxis, :], flag=1)
             result = result.detach().cpu().numpy()
+            print(result)
             # scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
             scale = (result[0]+result[1])/2
             print(result)
@@ -294,7 +295,7 @@ class TrackerSiamFC(Tracker):
 
             if visualize:
                 ops.show_image(img, boxes[f, :])
-        # self.feature_num.append(self.feature_count)
+        self.feature_num.append(self.feature_count)
         return boxes, times
 
     def train_step(self, batch, backward=True):
