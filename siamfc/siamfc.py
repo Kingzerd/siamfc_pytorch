@@ -75,6 +75,8 @@ class TrackerSiamFC(Tracker):
             self.cfg.ultimate_lr / self.cfg.initial_lr,
             1.0 / self.cfg.epoch_num)
         self.lr_scheduler = ExponentialLR(self.optimizer, gamma)
+        self.feature = []
+        self.feature_num = []
 
     def parse_args(self, **kwargs):
         # default parameters
@@ -94,7 +96,7 @@ class TrackerSiamFC(Tracker):
             'response_up': 16,
             'total_stride': 8,
             # train parameters
-            'epoch_num': 1,
+            'epoch_num': 10,
             'batch_size': 8,
             'num_workers': 16,
             'initial_lr': 1e-2,
@@ -116,9 +118,11 @@ class TrackerSiamFC(Tracker):
         self.net.eval()
 
         self.history = []
+        self.h_state = None
+        # self.feature_count = 0
         for i in range(self.cfg.time_step):
             self.history.append(box)
-        net_path = '../timeseries/pretrained/predictnet_e500.pth'
+        net_path = '../timeseries/pretrained/predictnet_e5000.pth'
         self.predictnet = PredictNet(net_path=net_path)
 
         # convert box to 0-indexed and center based [y, x, h, w]
@@ -169,6 +173,7 @@ class TrackerSiamFC(Tracker):
             out_size=self.cfg.instance_sz,
             border_value=self.avg_color) for f in self.scale_factors]
         x = np.stack(x, axis=0)
+        crops = x[:]
         x = torch.from_numpy(x).to(
             self.device).permute(0, 3, 1, 2).float()
 
@@ -176,6 +181,10 @@ class TrackerSiamFC(Tracker):
         x = self.net.backbone(x)
         responses = self.net.head(self.kernel, x)
         responses = responses.squeeze(1).cpu().numpy()
+
+        # initials = responses.copy()
+        # initials[:self.cfg.scale_num // 2] *= self.cfg.scale_penalty
+        # initials[self.cfg.scale_num // 2 + 1:] *= self.cfg.scale_penalty
 
         # upsample responses and penalize scale changes
         responses = np.stack([cv2.resize(
@@ -192,8 +201,17 @@ class TrackerSiamFC(Tracker):
         response = responses[scale_id]
         response -= response.min()
         response /= response.sum() + 1e-16
+        non_hann = response.copy()
         response = (1 - self.cfg.window_influence) * response + \
                    self.cfg.window_influence * self.hann_window
+
+        # print(response.shape)
+        # initial = initials[scale_id]
+        # initial -= initial.min()
+        # initial /= initial.sum() + 1e-16
+        # self.feature.append(initial)
+        # self.feature_count += 1
+
         loc = np.unravel_index(response.argmax(), response.shape)
 
         # locate target center
@@ -203,29 +221,29 @@ class TrackerSiamFC(Tracker):
         disp_in_image = disp_in_instance * self.x_sz * \
                         self.scale_factors[scale_id] / self.cfg.instance_sz
         self.center += disp_in_image
+        if self.rnn_flag == 1:
+            tmp = np.array(self.history, dtype=np.float32)
+            tmp = tmp[np.newaxis, :]
+            # print(tmp,tmp.shape)
+            result, self.h_state = self.predictnet.test(tmp, self.h_state, flag=1)
+            result = result.detach().cpu().numpy()
+            # scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
+            scale = (result[0]+result[1])/2
+            print(result)
+            # for i in range(2):
+            #     self.target_sz[i] *= result[i]
 
-        print(self.history)
-        tmp = np.array(self.history, dtype=np.float32)
-        tmp = tmp[np.newaxis, :]
-        # print(tmp,tmp.shape)
-        result = self.predictnet.test(tmp, flag=1)
-        result = result.detach().cpu().numpy()
-        # scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
-        scale = (result[0]+result[1])/2
-        print(result)
-        # for i in range(2):
-        #     self.target_sz[i] *= result[i]
+            # box = np.array([
+            #     self.center[1] + 1 - (result[0] - 1) / 2,
+            #     self.center[0] + 1 - (result[1] - 1) / 2,
+            #     result[0], result[1]])
+            # print(box)
+        else:
+            # update target size
+            scale = (1 - self.cfg.scale_lr) * 1.0 + \
+                self.cfg.scale_lr * self.scale_factors[scale_id]
+            # print(self.target_sz, scale)
 
-        # box = np.array([
-        #     self.center[1] + 1 - (result[0] - 1) / 2,
-        #     self.center[0] + 1 - (result[1] - 1) / 2,
-        #     result[0], result[1]])
-        # print(box)
-
-        # # update target size
-        # scale =  (1 - self.cfg.scale_lr) * 1.0 + \
-        #     self.cfg.scale_lr * self.scale_factors[scale_id]
-        # print(self.target_sz,scale)
         self.target_sz *= scale
         self.z_sz *= scale
         self.x_sz *= scale
@@ -238,10 +256,27 @@ class TrackerSiamFC(Tracker):
         self.history = self.history[1:]
         self.history.append(box)
         box = np.array(box)
-
+        box_copy = box.copy()
+        fac1 = 255/640
+        fac2 = 255/480
+        box_copy[0] *= fac1
+        box_copy[1] *= fac2
+        box_copy[2] *= fac1
+        box_copy[3] *= fac2
+        print(box)
+        if self.feature_flag==1:
+            ops.print_feature_2(crops[scale_id], response, box_copy)
+        if self.feature_flag==2:
+            ops.print_feature_3(crops[scale_id], response, box_copy, non_hann)
         return box
 
-    def track(self, img_files, box, visualize=False):
+    def write_feature(self):
+        np.save('feature.npy', np.array(self.feature))
+        np.save('feature_num.npy', np.array(self.feature_num))
+
+    def track(self, img_files, box, visualize=False, rnn_flag=1, feature_flag=1):
+        self.rnn_flag = rnn_flag
+        self.feature_flag = feature_flag
         frame_num = len(img_files)
         boxes = np.zeros((frame_num, 4))
         boxes[0] = box
@@ -259,7 +294,7 @@ class TrackerSiamFC(Tracker):
 
             if visualize:
                 ops.show_image(img, boxes[f, :])
-
+        # self.feature_num.append(self.feature_count)
         return boxes, times
 
     def train_step(self, batch, backward=True):

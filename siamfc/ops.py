@@ -3,6 +3,8 @@ from __future__ import absolute_import, division
 import torch.nn as nn
 import cv2
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib import patches
 
 
 def init_weights(model, gain=1):
@@ -28,7 +30,7 @@ def read_image(img_file, cvt_code=cv2.COLOR_BGR2RGB):
 
 
 def show_image(img, boxes=None, box_fmt='ltwh', colors=None,
-               thickness=3, fig_n=1, delay=0, visualize=True,
+               thickness=3, fig_n=1, delay=1, visualize=True,
                cvt_code=cv2.COLOR_RGB2BGR):
     if cvt_code is not None:
         img = cv2.cvtColor(img, cvt_code)
@@ -88,6 +90,31 @@ def show_image(img, boxes=None, box_fmt='ltwh', colors=None,
 
     return img
 
+def print_feature_2(img, feature, boxes):
+    plt.subplot(1,2,1)
+    plt.imshow(img)
+    print(img.shape)
+    # currentAxis = plt.gca()
+    # rect = patches.Rectangle((boxes[0], boxes[1]), boxes[2], boxes[3], linewidth=1, edgecolor='r', facecolor='none')
+    # currentAxis.add_patch(rect)
+    plt.subplot(1,2,2)
+    plt.imshow(feature)
+    print(feature.shape)
+    plt.show()
+
+def print_feature_3(img, feature, boxes, non_hann):
+    plt.subplot(1,3,1)
+    plt.imshow(img)
+    print(img.shape)
+    # currentAxis = plt.gca()
+    # rect = patches.Rectangle((boxes[0], boxes[1]), boxes[2], boxes[3], linewidth=1, edgecolor='r', facecolor='none')
+    # currentAxis.add_patch(rect)
+    plt.subplot(1,3,2)
+    plt.imshow(feature)
+    print(feature.shape)
+    plt.subplot(1, 3, 3)
+    plt.imshow(non_hann)
+    plt.show()
 
 def crop_and_resize(img, center, size, out_size,
                     border_type=cv2.BORDER_CONSTANT,

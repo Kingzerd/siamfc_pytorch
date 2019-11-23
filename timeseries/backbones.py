@@ -71,7 +71,7 @@ class PredictNet(nn.Module):
             'learning_rate': 0.02,
             'time_step': 5,
             'batch_size': 1,
-            'epoch_num': 500}
+            'epoch_num': 5000}
 
         for key, val in kwargs.items():
             if key in cfg:
@@ -104,31 +104,71 @@ class PredictNet(nn.Module):
         #     loss.backward()
         #     self.optimizer.step()
 
-        timeDataset = TimeDataset()
-        train_loader = DataLoader(dataset=timeDataset,
-                                  batch_size=self.cfg.batch_size,
-                                  shuffle=False)
         count = 0
-        for j in range(self.cfg.epoch_num // len(train_loader) + 1):
-            for i, data in enumerate(train_loader):
-                if (j * len(train_loader) + i - count == self.cfg.epoch_num):
+        flag1 = 0
+        flag2 = 0
+        path = 'H:/datasets/OTB100/'
+        for k in range(1000):
+            for j in os.listdir(path):
+                if j == 'Jogging':
                     break
-                inputs, labels = data
-                print(labels.shape)
-                if (labels.shape[0] != self.cfg.batch_size):
+                cur = path + j
+                print(cur)
+                timeDataset = TimeDataset(cur)
+                train_loader = DataLoader(dataset=timeDataset,
+                                          batch_size=self.cfg.batch_size,
+                                          shuffle=False)
+                for i, data in enumerate(train_loader):
+                    if count == self.cfg.epoch_num:
+                        flag2 = 1
+                        flag1 = 1
+                        break
                     count += 1
-                    continue
+                    inputs, labels = data
+                    # print(labels.shape)
+                    if (labels.shape[0] != self.cfg.batch_size):
+                        count -= 1
+                        continue
+                    x = inputs.to(self.device)
+                    y = labels.to(self.device)
+                    prediction, h_state = self.net(x, h_state)
+                    h_state = h_state.detach()
 
-                x = inputs.to(self.device)
-                y = labels.to(self.device)
-                prediction, h_state = self.net(x, h_state)
-                h_state = h_state.detach()
+                    loss = self.loss_func(prediction, y)
+                    losses.append(loss.item())
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                if flag1 == 1:
+                    break
+            if flag2 == 1:
+                break
 
-                loss = self.loss_func(prediction, y)
-                losses.append(loss.item())
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
+        # timeDataset = TimeDataset()
+        # train_loader = DataLoader(dataset=timeDataset,
+        #                           batch_size=self.cfg.batch_size,
+        #                           shuffle=False)
+        # count = 0
+        # for j in range(self.cfg.epoch_num // len(train_loader) + 1):
+        #     for i, data in enumerate(train_loader):
+        #         if (j * len(train_loader) + i - count == self.cfg.epoch_num):
+        #             break
+        #         inputs, labels = data
+        #         print(labels.shape)
+        #         if (labels.shape[0] != self.cfg.batch_size):
+        #             count += 1
+        #             continue
+        #
+        #         x = inputs.to(self.device)
+        #         y = labels.to(self.device)
+        #         prediction, h_state = self.net(x, h_state)
+        #         h_state = h_state.detach()
+        #
+        #         loss = self.loss_func(prediction, y)
+        #         losses.append(loss.item())
+        #         self.optimizer.zero_grad()
+        #         loss.backward()
+        #         self.optimizer.step()
 
         # plt.plot(steps, y_np.flatten(), 'r-')
         # plt.plot(steps, prediction.detach().cpu().numpy().flatten(), 'b-')
@@ -159,6 +199,6 @@ class PredictNet(nn.Module):
         h_state = state
         prediction, h_state = self.net(x, h_state)
         if (flag == 0):
-            return prediction[0][0]
+            return prediction[0][0],h_state
         else:
-            return prediction[0][-1]
+            return prediction[0][-1],h_state
