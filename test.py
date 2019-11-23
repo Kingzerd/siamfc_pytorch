@@ -49,7 +49,7 @@ import os
 #     # if os.path.isfile(i):
 #         print(os.path.join(os.getcwd(),i))
 
-a = np.load("tools/feature_num.npy")
+a = np.load("tools/feature.npy")
 # b = 0
 # for i in range(a.shape[0]):
 #     b += a[i]
