@@ -46,11 +46,16 @@ import os
 # print(listdir('H:/datasets/OTB100/BlurBody'))
 
 # for i in os.listdir('H:/datasets/OTB100'):
-#     # if os.path.isfile(i):
-#         print(os.path.join(os.getcwd(),i))
+    # if os.path.isfile(i):
+    #     print(os.path.join(os.getcwd(),i))
+with open('names.txt','w+') as f:
+    for i in os.listdir('H:/datasets/OTB100'):
+    # f.read()
+        f.write(i+'\n')
 
-a = np.load("tools/feature_num.npy")
+
+# a = np.load("tools/feature_num.npy")
 # b = 0
 # for i in range(a.shape[0]):
 #     b += a[i]
-print(a)
+# print(a)
