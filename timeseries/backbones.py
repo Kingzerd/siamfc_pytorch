@@ -166,6 +166,7 @@ class PredictNet(nn.Module):
         x = torch.from_numpy(seqs).to(self.device)
         h_state = state
         prediction, h_state = self.net(x, h_state)
+        print(prediction.shape)
         if (flag == 0):
             return prediction[0][:],h_state
         else:

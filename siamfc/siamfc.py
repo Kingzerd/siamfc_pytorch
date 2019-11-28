@@ -17,6 +17,7 @@ from got10k.trackers import Tracker
 from . import ops
 from .backbones import AlexNetV1
 from .heads import SiamFC
+from .rnn import Rnn
 from .losses import BalancedLoss
 from .datasets import Pair
 from .transforms import SiamFCTransforms
@@ -27,15 +28,19 @@ __all__ = ['TrackerSiamFC']
 
 class Net(nn.Module):
 
-    def __init__(self, backbone, head):
+    def __init__(self, backbone, head, regression):
         super(Net, self).__init__()
         self.backbone = backbone
         self.head = head
+        self.regression = regression
 
     def forward(self, z, x):
         z = self.backbone(z)
         x = self.backbone(x)
-        return self.head(z, x)
+        score = self.head(z, x)
+        # print(score.shape)
+        dxywh = self.regression(score.squeeze(1))
+        return score, dxywh
 
 
 class TrackerSiamFC(Tracker):
@@ -51,8 +56,16 @@ class TrackerSiamFC(Tracker):
         # setup model
         self.net = Net(
             backbone=AlexNetV1(),
-            head=SiamFC(self.cfg.out_scale))
+            head=SiamFC(self.cfg.out_scale),
+            regression=Rnn(
+                input_size=self.cfg.input_size,
+                hidden_size=self.cfg.hidden_size,
+                num_layers=self.cfg.num_layers,
+                batch_first=self.cfg.batch_first,
+                out_scale=self.cfg.out_scale
+            ))
         ops.init_weights(self.net)
+        self.h_state = None
 
         # load checkpoint if provided
         if net_path is not None:
@@ -62,6 +75,7 @@ class TrackerSiamFC(Tracker):
 
         # setup criterion
         self.criterion = BalancedLoss()
+        self.reg_loss = nn.MSELoss()
 
         # setup optimizer
         self.optimizer = optim.SGD(
@@ -105,7 +119,13 @@ class TrackerSiamFC(Tracker):
             'momentum': 0.9,
             'r_pos': 16,
             'r_neg': 0,
-            'time_step': 5}
+            'input_size': 15,
+            'hidden_size': 32,
+            'num_layers': 1,
+            'batch_first': True,
+            'out_scale': 4,
+            'learning_rate': 0.01,
+            'time_step': 15}
 
         for key, val in kwargs.items():
             if key in cfg:
@@ -117,13 +137,13 @@ class TrackerSiamFC(Tracker):
         # set to evaluation mode
         self.net.eval()
 
-        self.history = []
-        self.h_state = None
-        self.feature_count = 0
-        for i in range(self.cfg.time_step):
-            self.history.append(box)
-        net_path = '../timeseries/pretrained/predictnet_e2000.pth'
-        self.predictnet = PredictNet(net_path=net_path)
+        # self.history = []
+        # self.h_state = None
+        # self.feature_count = 0
+        # for i in range(self.cfg.time_step):
+        #     self.history.append(box)
+        # net_path = '../timeseries/pretrained/predictnet_e2000.pth'
+        # self.predictnet = PredictNet(net_path=net_path)
 
         # convert box to 0-indexed and center based [y, x, h, w]
         box = np.array([
@@ -302,17 +322,28 @@ class TrackerSiamFC(Tracker):
         # set network mode
         self.net.train(backward)
 
+        label_dxywh = []
+        for k in range(self.cfg.batch_size):
+            tmp = []
+            tmp.append(batch[3][k][0]-batch[2][k][0])
+            tmp.append(batch[3][k][1]-batch[2][k][1])
+            tmp.append(batch[3][k][2]/batch[2][k][2])
+            tmp.append(batch[3][k][3]/batch[2][k][3])
+            label_dxywh.append(tmp)
+        label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
+
         # parse batch data
         z = batch[0].to(self.device, non_blocking=self.cuda)
         x = batch[1].to(self.device, non_blocking=self.cuda)
+        label_dxywh = label_dxywh.to(self.device, non_blocking=self.cuda)
 
         with torch.set_grad_enabled(backward):
             # inference
-            responses = self.net(z, x)
-
+            responses, dxywh = self.net(z, x)
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
+            # loss += self.reg_loss(dxywh, label_dxywh)
 
             if backward:
                 # back propagation
@@ -366,7 +397,7 @@ class TrackerSiamFC(Tracker):
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
             net_path = os.path.join(
-                save_dir, 'siamfc_alexnet_e%d.pth' % (epoch + 1))
+                save_dir, 'siamfc_alexnet_ee%d.pth' % (epoch + 1))
             torch.save(self.net.state_dict(), net_path)
 
     def _create_labels(self, size):

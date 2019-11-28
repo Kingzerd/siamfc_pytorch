@@ -114,7 +114,7 @@ class SiamFCTransforms(object):
         x = self._crop(x, box_x, self.instance_sz)
         z = self.transforms_z(z)
         x = self.transforms_x(x)
-        return z, x
+        return z, x, box_z, box_x
     
     def _crop(self, img, box, out_size):
         # convert box to 0-indexed and center based [y, x, h, w]

@@ -1,5 +1,9 @@
 import numpy as np
 import os
+import torch
+
+a = np.array([1,2,3,4])
+a = torch.from_numpy(a)
 # a = np.random.randn(3,4)
 # print(a,a.shape)
 #
@@ -24,7 +28,7 @@ import os
 # print(np.prod(np.array([100.,200.],dtype=np.float32)+150))
 
 # a = np.random.randn(3,2,4)
-# print(np.stack(a, axis=0).shape)
+# print(np.stack(a, axis=0)[:,-1].shape)
 #
 # b = np.array([[[1,2,3],[4,5,6],[1,2,3]],[[1,2,3],[4,5,6],[1,2,3]]])
 # print(np.argmax(np.amax(b,axis=(1,2))))
@@ -48,10 +52,10 @@ import os
 # for i in os.listdir('H:/datasets/OTB100'):
     # if os.path.isfile(i):
     #     print(os.path.join(os.getcwd(),i))
-with open('names.txt','w+') as f:
-    for i in os.listdir('H:/datasets/OTB100'):
-    # f.read()
-        f.write(i+'\n')
+# with open('names.txt','w+') as f:
+#     for i in os.listdir('H:/datasets/OTB100'):
+#     # f.read()
+#         f.write(i+'\n')
 
 
 # a = np.load("tools/feature_num.npy")
@@ -59,3 +63,31 @@ with open('names.txt','w+') as f:
 # for i in range(a.shape[0]):
 #     b += a[i]
 # print(a)
+
+# from PIL import Image
+# from got10k.datasets import GOT10k
+# from got10k.utils.viz import show_frame
+#
+# dataset = GOT10k(root_dir='H:/datasets/GOT-10k', subset='train', return_meta=True)
+
+# print(dataset)
+# indices = np.random.permutation(len(dataset))
+# print(len(indices))
+# indexing
+# img_file, anno, meta = dataset[10]
+# print(anno[0])
+
+# print(len(img_file), len(anno))
+# print(anno[0])
+
+# for-loop
+# for s, (img_files, anno) in enumerate(dataset):
+#     seq_name = dataset.seq_names[s]
+#     print('Sequence:', seq_name)
+#
+#     # show all frames
+#     for f, img_file in enumerate(img_files):
+#         image = Image.open(img_file)
+#         show_frame(image, anno[f, :])
+
+
