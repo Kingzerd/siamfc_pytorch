@@ -56,14 +56,17 @@ class TrackerSiamFC(Tracker):
         # setup model
         self.net = Net(
             backbone=AlexNetV1(),
-            head=SiamFC(self.cfg.out_scale),
-            regression=Rnn(
-                input_size=self.cfg.input_size,
-                hidden_size=self.cfg.hidden_size,
-                num_layers=self.cfg.num_layers,
-                batch_first=self.cfg.batch_first,
-                out_scale=self.cfg.out_scale
-            ))
+            head=SiamFC(self.cfg.out_scale))
+        # self.net = Net(
+        #     backbone=AlexNetV1(),
+        #     head=SiamFC(self.cfg.out_scale),
+        #     regression=Rnn(
+        #         input_size=self.cfg.input_size,
+        #         hidden_size=self.cfg.hidden_size,
+        #         num_layers=self.cfg.num_layers,
+        #         batch_first=self.cfg.batch_first,
+        #         out_scale=self.cfg.out_scale
+        #     ))
         ops.init_weights(self.net)
         self.h_state = None
 
@@ -339,7 +342,9 @@ class TrackerSiamFC(Tracker):
 
         with torch.set_grad_enabled(backward):
             # inference
+            # responses = self.net(z, x)
             responses, dxywh = self.net(z, x)
+
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
