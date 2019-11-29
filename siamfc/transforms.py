@@ -22,6 +22,21 @@ class Compose(object):
         return img
 
 
+class RocoverSize(object):
+
+    def __init__(self, size=(255,255)):
+        self.size = size
+
+    def __call__(self, img):
+        interp = np.random.choice([
+            cv2.INTER_LINEAR,
+            cv2.INTER_CUBIC,
+            cv2.INTER_AREA,
+            cv2.INTER_NEAREST,
+            cv2.INTER_LANCZOS4])
+        return cv2.resize(img, self.size, interpolation=interp)
+
+
 class RandomStretch(object):
 
     def __init__(self, max_stretch=0.05):
@@ -107,6 +122,7 @@ class SiamFCTransforms(object):
             RandomStretch(),
             CenterCrop(instance_sz - 8),
             RandomCrop(instance_sz - 2 * 8),
+            RocoverSize(),
             ToTensor()])
     
     def __call__(self, z, x, box_z, box_x):

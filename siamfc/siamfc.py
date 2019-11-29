@@ -21,7 +21,7 @@ from .rnn import Rnn
 from .losses import BalancedLoss
 from .datasets import Pair
 from .transforms import SiamFCTransforms
-from timeseries import PredictNet
+# from timeseries import PredictNet
 
 __all__ = ['TrackerSiamFC']
 
@@ -38,7 +38,6 @@ class Net(nn.Module):
         z = self.backbone(z)
         x = self.backbone(x)
         score = self.head(z, x)
-        # print(score.shape)
         dxywh = self.regression(score.squeeze(1))
         return score, dxywh
 
@@ -54,19 +53,19 @@ class TrackerSiamFC(Tracker):
         self.device = torch.device('cuda:0' if self.cuda else 'cpu')
 
         # setup model
-        self.net = Net(
-            backbone=AlexNetV1(),
-            head=SiamFC(self.cfg.out_scale))
         # self.net = Net(
         #     backbone=AlexNetV1(),
-        #     head=SiamFC(self.cfg.out_scale),
-        #     regression=Rnn(
-        #         input_size=self.cfg.input_size,
-        #         hidden_size=self.cfg.hidden_size,
-        #         num_layers=self.cfg.num_layers,
-        #         batch_first=self.cfg.batch_first,
-        #         out_scale=self.cfg.out_scale
-        #     ))
+        #     head=SiamFC(self.cfg.feature_scale))
+        self.net = Net(
+            backbone=AlexNetV1(),
+            head=SiamFC(self.cfg.feature_scale),
+            regression=Rnn(
+                input_size=self.cfg.input_size,
+                hidden_size=self.cfg.hidden_size,
+                num_layers=self.cfg.num_layers,
+                batch_first=self.cfg.batch_first,
+                out_scale=self.cfg.out_scale
+            ))
         ops.init_weights(self.net)
         self.h_state = None
 
@@ -78,7 +77,7 @@ class TrackerSiamFC(Tracker):
 
         # setup criterion
         self.criterion = BalancedLoss()
-        self.reg_loss = nn.MSELoss()
+        self.reg_loss = nn.SmoothL1Loss()
 
         # setup optimizer
         self.optimizer = optim.SGD(
@@ -99,21 +98,21 @@ class TrackerSiamFC(Tracker):
         # default parameters
         cfg = {
             # basic parameters
-            'out_scale': 0.001,
+            'feature_scale': 0.001,
             'exemplar_sz': 127,
             'instance_sz': 255,
             'context': 0.5,
             # inference parameters
             'scale_num': 3,
             'scale_step': 1.0375,
-            'scale_lr': 0.59,
+            'scale_lr': 0.1,
             'scale_penalty': 0.9745,
             'window_influence': 0.176,
             'response_sz': 17,
             'response_up': 16,
             'total_stride': 8,
             # train parameters
-            'epoch_num': 10,
+            'epoch_num': 20,
             'batch_size': 8,
             'num_workers': 16,
             'initial_lr': 1e-2,
@@ -122,13 +121,12 @@ class TrackerSiamFC(Tracker):
             'momentum': 0.9,
             'r_pos': 16,
             'r_neg': 0,
-            'input_size': 15,
+            'input_size': 17,
             'hidden_size': 32,
             'num_layers': 1,
             'batch_first': True,
             'out_scale': 4,
-            'learning_rate': 0.01,
-            'time_step': 15}
+            'time_step': 17}
 
         for key, val in kwargs.items():
             if key in cfg:
@@ -228,12 +226,17 @@ class TrackerSiamFC(Tracker):
         response = (1 - self.cfg.window_influence) * response + \
                    self.cfg.window_influence * self.hann_window
 
-        print(response.shape)
         initial = initials[scale_id]
         initial -= initial.min()
         initial /= initial.sum() + 1e-16
-        self.feature.append(initial)
-        self.feature_count += 1
+
+        # print(initial.shape)
+        dxywh = self.net.regression(torch.from_numpy(initial[np.newaxis, :]).to(self.device))
+        dxywh = dxywh.detach().cpu().numpy()
+        dxywh = dxywh[0]
+        # print(dxywh.shape)
+        # self.feature.append(initial)
+        # self.feature_count += 1
 
         loc = np.unravel_index(response.argmax(), response.shape)
 
@@ -265,20 +268,24 @@ class TrackerSiamFC(Tracker):
         else:
             # update target size
             scale = (1 - self.cfg.scale_lr) * 1.0 + \
-                self.cfg.scale_lr * self.scale_factors[scale_id]
+                self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt(dxywh[2] * dxywh[3])
             # print(self.target_sz, scale)
 
-        self.target_sz *= scale
-        self.z_sz *= scale
-        self.x_sz *= scale
+        print(dxywh)
+        dx = dxywh[0] * self.target_sz[1]
+        dy = dxywh[1] * self.target_sz[0]
+        scale_factor = scale
+        self.target_sz *= scale_factor
+        self.z_sz *= scale_factor
+        self.x_sz *= scale_factor
 
         # return 1-indexed and left-top based bounding box
         box = [
-            self.center[1] + 1 - (self.target_sz[1] - 1) / 2,
-            self.center[0] + 1 - (self.target_sz[0] - 1) / 2,
+            self.center[1] + dx + 1 - (self.target_sz[1] - 1) / 2,
+            self.center[0] + dy + 1 - (self.target_sz[0] - 1) / 2,
             self.target_sz[1], self.target_sz[0]]
-        self.history = self.history[1:]
-        self.history.append(box)
+        # self.history = self.history[1:]
+        # self.history.append(box)
         box = np.array(box)
         box_copy = box.copy()
         fac1 = 255/640
@@ -318,7 +325,7 @@ class TrackerSiamFC(Tracker):
 
             if visualize:
                 ops.show_image(img, boxes[f, :])
-        self.feature_num.append(self.feature_count)
+        # self.feature_num.append(self.feature_count)
         return boxes, times
 
     def train_step(self, batch, backward=True):
@@ -328,12 +335,13 @@ class TrackerSiamFC(Tracker):
         label_dxywh = []
         for k in range(self.cfg.batch_size):
             tmp = []
-            tmp.append(batch[3][k][0]-batch[2][k][0])
-            tmp.append(batch[3][k][1]-batch[2][k][1])
+            tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
+            tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
             tmp.append(batch[3][k][2]/batch[2][k][2])
             tmp.append(batch[3][k][3]/batch[2][k][3])
             label_dxywh.append(tmp)
         label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
+        # print('label ', label_dxywh[0])
 
         # parse batch data
         z = batch[0].to(self.device, non_blocking=self.cuda)
@@ -344,11 +352,14 @@ class TrackerSiamFC(Tracker):
             # inference
             # responses = self.net(z, x)
             responses, dxywh = self.net(z, x)
+            # print('dxywh ',dxywh[0])
 
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
-            # loss += self.reg_loss(dxywh, label_dxywh)
+            reg_loss = self.reg_loss(dxywh, label_dxywh)
+            print('cls_loss ', loss, 'reg_loss ', reg_loss)
+            loss += reg_loss
 
             if backward:
                 # back propagation
@@ -381,7 +392,7 @@ class TrackerSiamFC(Tracker):
         dataloader = DataLoader(
             dataset,
             batch_size=self.cfg.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=self.cfg.num_workers,
             pin_memory=self.cuda,
             drop_last=True)
@@ -401,9 +412,10 @@ class TrackerSiamFC(Tracker):
             # save checkpoint
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
-            net_path = os.path.join(
-                save_dir, 'siamfc_alexnet_ee%d.pth' % (epoch + 1))
-            torch.save(self.net.state_dict(), net_path)
+            if (epoch+1) % 5 == 0:
+                net_path = os.path.join(
+                    save_dir, 'siamfc_alexnet_ee%d.pth' % (epoch + 1))
+                torch.save(self.net.state_dict(), net_path)
 
     def _create_labels(self, size):
         # skip if same sized labels already created
