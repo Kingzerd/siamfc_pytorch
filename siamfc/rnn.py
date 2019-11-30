@@ -12,7 +12,7 @@ class Rnn(nn.Module):
 
         self.num_layers = num_layers
         self.hidden_size = hidden_size
-        self.rnn = nn.RNN(
+        self.rnn = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -23,8 +23,8 @@ class Rnn(nn.Module):
 
     def forward(self, x, h_state=None):
         h = torch.autograd.Variable(torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda())
-        # c0 = Variable(torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda())
-        r_out, h_state = self.rnn(x, h)
+        c = torch.autograd.Variable(torch.zeros(self.num_layers, x.size(0), self.hidden_size).cuda())
+        r_out, (h_state, c_state) = self.rnn(x, (h, c))
 
         outs = []
         for time in range(r_out.size(1)):

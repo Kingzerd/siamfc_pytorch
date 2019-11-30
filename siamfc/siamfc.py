@@ -115,8 +115,8 @@ class TrackerSiamFC(Tracker):
             'epoch_num': 20,
             'batch_size': 8,
             'num_workers': 16,
-            'initial_lr': 1e-2,
-            'ultimate_lr': 1e-5,
+            'initial_lr': 1e-3,
+            'ultimate_lr': 1e-6,
             'weight_decay': 5e-4,
             'momentum': 0.9,
             'r_pos': 16,
@@ -357,7 +357,7 @@ class TrackerSiamFC(Tracker):
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
-            reg_loss = self.reg_loss(dxywh, label_dxywh)
+            reg_loss = self.reg_loss(dxywh, label_dxywh)*2
             print('cls_loss ', loss, 'reg_loss ', reg_loss)
             loss += reg_loss
 
@@ -392,7 +392,7 @@ class TrackerSiamFC(Tracker):
         dataloader = DataLoader(
             dataset,
             batch_size=self.cfg.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.cfg.num_workers,
             pin_memory=self.cuda,
             drop_last=True)

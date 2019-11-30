@@ -8,7 +8,7 @@ from siamfc import TrackerSiamFC
 
 
 if __name__ == '__main__':
-    net_path = 'pretrained/siamfc_alexnet_ee20.pth'
+    net_path = 'pretrained/siamfc_alexnet_ee10.pth'
     tracker = TrackerSiamFC(net_path=net_path)
 
     # seq_dir = os.path.expanduser('~/data/OTB/Crossing')
