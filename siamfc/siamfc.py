@@ -268,10 +268,10 @@ class TrackerSiamFC(Tracker):
         else:
             # update target size
             scale = (1 - self.cfg.scale_lr) * 1.0 + \
-                self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt(dxywh[2] * dxywh[3])
+                self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt((1+dxywh[2]) * (1+dxywh[3]))
             # print(self.target_sz, scale)
 
-        print(dxywh)
+        print('regression: ', dxywh)
         dx = dxywh[0] * self.target_sz[1]
         dy = dxywh[1] * self.target_sz[0]
         scale_factor = scale
@@ -294,7 +294,7 @@ class TrackerSiamFC(Tracker):
         box_copy[1] *= fac2
         box_copy[2] *= fac1
         box_copy[3] *= fac2
-        print(box)
+        print('box: ', box)
         if self.feature_flag==1:
             ops.print_feature_2(crops[scale_id], response, box_copy)
         if self.feature_flag==2:
@@ -337,8 +337,8 @@ class TrackerSiamFC(Tracker):
             tmp = []
             tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
             tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
-            tmp.append(batch[3][k][2]/batch[2][k][2])
-            tmp.append(batch[3][k][3]/batch[2][k][3])
+            tmp.append(batch[3][k][2]/batch[2][k][2]-1)
+            tmp.append(batch[3][k][3]/batch[2][k][3]-1)
             label_dxywh.append(tmp)
         label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
         # print('label ', label_dxywh[0])
@@ -414,7 +414,7 @@ class TrackerSiamFC(Tracker):
                 os.makedirs(save_dir)
             if (epoch+1) % 5 == 0:
                 net_path = os.path.join(
-                    save_dir, 'siamfc_alexnet_ee%d.pth' % (epoch + 1))
+                    save_dir, 'siamfc_alexnet_eee%d.pth' % (epoch + 1))
                 torch.save(self.net.state_dict(), net_path)
 
     def _create_labels(self, size):
