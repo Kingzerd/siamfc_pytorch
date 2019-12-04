@@ -105,14 +105,14 @@ class TrackerSiamFC(Tracker):
             # inference parameters
             'scale_num': 3,
             'scale_step': 1.0375,
-            'scale_lr': 0.1,
+            'scale_lr': 0.59,
             'scale_penalty': 0.9745,
             'window_influence': 0.176,
             'response_sz': 17,
             'response_up': 16,
             'total_stride': 8,
             # train parameters
-            'epoch_num': 20,
+            'epoch_num': 30,
             'batch_size': 8,
             'num_workers': 16,
             'initial_lr': 1e-3,
@@ -122,7 +122,7 @@ class TrackerSiamFC(Tracker):
             'r_pos': 16,
             'r_neg': 0,
             'input_size': 17,
-            'hidden_size': 32,
+            'hidden_size': 17,
             'num_layers': 1,
             'batch_first': True,
             'out_scale': 4,
@@ -275,15 +275,16 @@ class TrackerSiamFC(Tracker):
         dx = dxywh[0] * self.target_sz[1]
         dy = dxywh[1] * self.target_sz[0]
         scale_factor = scale
-        self.target_sz *= scale_factor
-        self.z_sz *= scale_factor
-        self.x_sz *= scale_factor
+        # self.target_sz *= scale_factor
+        target_sz_copy = self.target_sz * scale_factor
+        # self.z_sz *= scale_factor
+        # self.x_sz *= scale_factor
 
         # return 1-indexed and left-top based bounding box
         box = [
-            self.center[1] + dx + 1 - (self.target_sz[1] - 1) / 2,
-            self.center[0] + dy + 1 - (self.target_sz[0] - 1) / 2,
-            self.target_sz[1], self.target_sz[0]]
+            self.center[1] + dx + 1 - (target_sz_copy[1] - 1) / 2,
+            self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
+            target_sz_copy[1], target_sz_copy[0]]
         # self.history = self.history[1:]
         # self.history.append(box)
         box = np.array(box)

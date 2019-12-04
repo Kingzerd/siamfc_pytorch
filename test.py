@@ -2,8 +2,9 @@ import numpy as np
 import os
 import torch
 
-a = np.array([1,2,3,4])
+a = np.array([[[1,2],[3,4]]])
 a = torch.from_numpy(a)
+print(a,a.transpose(-2,-1))
 # a = np.random.randn(3,4)
 # print(a,a.shape)
 #
@@ -89,5 +90,8 @@ a = torch.from_numpy(a)
 #     for f, img_file in enumerate(img_files):
 #         image = Image.open(img_file)
 #         show_frame(image, anno[f, :])
+a = np.array([[[1,1],[2,2]],[[2,2],[3,3]]])
+a = a[::-1]
+print(a)
 
 

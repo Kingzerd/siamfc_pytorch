@@ -15,7 +15,7 @@ if __name__ == '__main__':
     path = 'H:/datasets/OTB100/'
     for i in os.listdir(path):
         # seq_dir = path + i
-        seq_dir = 'H:/datasets/OTB100/Bolt2'
+        seq_dir = 'H:/datasets/OTB100/Bolt'
         img_files = sorted(glob.glob(seq_dir + '/img/*.jpg'))
         anno = np.loadtxt(seq_dir + '/groundtruth_rect.txt', delimiter=',')
 
