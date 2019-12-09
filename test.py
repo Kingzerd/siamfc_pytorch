@@ -2,9 +2,9 @@ import numpy as np
 import os
 import torch
 
-a = np.array([[[1,2],[3,4]]])
-a = torch.from_numpy(a)
-print(a,a.transpose(-2,-1))
+# a = np.array([[[1,2],[3,4]]])
+# a = torch.from_numpy(a)
+# print(a,a.transpose(-2,-1))
 # a = np.random.randn(3,4)
 # print(a,a.shape)
 #
@@ -22,8 +22,8 @@ print(a,a.transpose(-2,-1))
 # y = e.sum()
 # print(x,y)
 
-# print(np.hanning(10))
-# print(np.outer(np.hanning(10),np.hanning(10)))
+print(np.hanning(10))
+print(np.outer(np.hanning(10),np.hanning(10)))
 
 # c = 0.5 * np.sum([100,200])
 # print(np.prod(np.array([100.,200.],dtype=np.float32)+150))
@@ -91,7 +91,12 @@ print(a,a.transpose(-2,-1))
 #         image = Image.open(img_file)
 #         show_frame(image, anno[f, :])
 a = np.array([[[1,1],[2,2]],[[2,2],[3,3]]])
-a = a[::-1]
-print(a)
+print(np.where(a>1))
+b = 1-(a==1)
+print(b)
+print(a[b])
+# a = a[::-1]
+# print(a)
+
 
 

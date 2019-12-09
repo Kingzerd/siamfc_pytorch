@@ -30,6 +30,7 @@ class SiamFC(nn.Module):
 
         # print()
         concat = torch.cat(concat,0)
+        # print(concat)
         return concat
 
 

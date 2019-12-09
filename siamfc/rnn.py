@@ -36,7 +36,9 @@ class Rnn(nn.Module):
             num_layers=num_layers,
             batch_first=batch_first
         )
-        self.conv1 = nn.Conv2d(68, 17, 1, 1)
+        self.conv1 = nn.Conv2d(4, 1, 1, 1)
+        self.conv2 = nn.Conv2d(4, 4, 17, 1)
+        self.relu1 = nn.ReLU(inplace=True)
 
         self.out = nn.Linear(hidden_size, out_scale)
 
@@ -52,21 +54,22 @@ class Rnn(nn.Module):
         r_out1, h_state1 = self.rnn1(x1, h1)
         r_out2, h_state2 = self.rnn2(x2, h2)
         r_out3, h_state3 = self.rnn3(x3, h3)
-        x = self.conv1(torch.cat((r_out, r_out1, r_out2, r_out3), 2).unsqueeze(1).permute(0, 3, 1, 2)).permute(0, 2, 3,
-                                                                                                               1).squeeze(1)
+        x = self.conv1(torch.stack((r_out, r_out1, r_out2, r_out3), -1).permute(0, 3, 1, 2)).squeeze(1)
 
         x1, x2, x3 = self.four_copy(x)
         r_out, h_state = self.rnn(x, h)
         r_out1, h_state1 = self.rnn1(x1, h1)
         r_out2, h_state2 = self.rnn2(x2, h2)
         r_out3, h_state3 = self.rnn3(x3, h3)
-        x = self.conv1(torch.cat((r_out, r_out1, r_out2, r_out3), 2).unsqueeze(1).permute(0, 3, 1, 2)).permute(0, 2, 3,
-                                                                                                               1).squeeze(1)
+        x = self.conv2(torch.stack((r_out, r_out1, r_out2, r_out3), -1).permute(0, 3, 1, 2)).squeeze(2).squeeze(2)
+        # x = self.relu1(x)
 
-        outs = []
-        for time in range(x.size(1)):
-            outs.append(self.out(x[:, time, :]))
-        return torch.stack(outs, dim=1)[:, -1]
+        # print(x, x.shape)
+        # outs = []
+        # for time in range(x.size(1)):
+        #     outs.append(self.out(x[:, time, :]))
+        # return torch.stack(outs, dim=1)[:, -1]
+        return x
 
     def four_copy(self, x):
         batch = x.size(0)

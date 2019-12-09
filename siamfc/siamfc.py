@@ -80,11 +80,15 @@ class TrackerSiamFC(Tracker):
         self.reg_loss = nn.SmoothL1Loss()
 
         # setup optimizer
-        self.optimizer = optim.SGD(
+        # self.optimizer = optim.SGD(
+        #     self.net.parameters(),
+        #     lr=self.cfg.initial_lr,
+        #     weight_decay=self.cfg.weight_decay,
+        #     momentum=self.cfg.momentum)
+        self.optimizer = optim.Adam(
             self.net.parameters(),
             lr=self.cfg.initial_lr,
-            weight_decay=self.cfg.weight_decay,
-            momentum=self.cfg.momentum)
+            weight_decay=self.cfg.weight_decay)
 
         # setup lr scheduler
         gamma = np.power(
@@ -112,7 +116,7 @@ class TrackerSiamFC(Tracker):
             'response_up': 16,
             'total_stride': 8,
             # train parameters
-            'epoch_num': 30,
+            'epoch_num': 20,
             'batch_size': 8,
             'num_workers': 16,
             'initial_lr': 1e-3,
@@ -221,14 +225,17 @@ class TrackerSiamFC(Tracker):
         # peak location
         response = responses[scale_id]
         response -= response.min()
-        response /= response.sum() + 1e-16
+        # response /= response.sum() + 1e-16
+        response /= (response.max()-response.min())
         non_hann = response.copy()
         response = (1 - self.cfg.window_influence) * response + \
                    self.cfg.window_influence * self.hann_window
 
         initial = initials[scale_id]
-        initial -= initial.min()
-        initial /= initial.sum() + 1e-16
+        # initial -= initial.min()
+        # initial /= initial.sum() + 1e-16
+        # initial /= (initial.max() - initial.min())
+        # print(initial)
 
         # print(initial.shape)
         dxywh = self.net.regression(torch.from_numpy(initial[np.newaxis, :]).to(self.device))
@@ -247,44 +254,38 @@ class TrackerSiamFC(Tracker):
         disp_in_image = disp_in_instance * self.x_sz * \
                         self.scale_factors[scale_id] / self.cfg.instance_sz
         self.center += disp_in_image
-        if self.rnn_flag == 1:
-            tmp = np.array(self.history, dtype=np.float32)
-            tmp = tmp[np.newaxis, :]
-            # print(tmp,tmp.shape)
-            result, self.h_state = self.predictnet.test(initial[np.newaxis, :], flag=1)
-            result = result.detach().cpu().numpy()
-            print(result)
-            # scale = (1 - self.cfg.scale_lr) * 1.0 + self.cfg.scale_lr * (result[0]+result[1])/2
-            scale = (result[0]+result[1])/2
-            print(result)
-            # for i in range(2):
-            #     self.target_sz[i] *= result[i]
 
-            # box = np.array([
-            #     self.center[1] + 1 - (result[0] - 1) / 2,
-            #     self.center[0] + 1 - (result[1] - 1) / 2,
-            #     result[0], result[1]])
-            # print(box)
-        else:
-            # update target size
-            scale = (1 - self.cfg.scale_lr) * 1.0 + \
-                self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt((1+dxywh[2]) * (1+dxywh[3]))
-            # print(self.target_sz, scale)
+        # update target size
+        scale = (1 - self.cfg.scale_lr) * 1.0 + \
+            self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt((1+dxywh[2]) * (1+dxywh[3]))
+        # print(self.target_sz, scale)
 
-        print('regression: ', dxywh)
+        # print('regression: ', dxywh, np.exp(dxywh[2]), np.exp(dxywh[3]))
         dx = dxywh[0] * self.target_sz[1]
         dy = dxywh[1] * self.target_sz[0]
+        print('regression: ', dx, dy, np.exp(dxywh[2]), np.exp(dxywh[3]))
         scale_factor = scale
         # self.target_sz *= scale_factor
         target_sz_copy = self.target_sz * scale_factor
         # self.z_sz *= scale_factor
         # self.x_sz *= scale_factor
+        # self.originwh[0] *= np.exp(dxywh[2])
+        # self.originwh[1] *= np.exp(dxywh[3])
 
         # return 1-indexed and left-top based bounding box
+        # box = [
+        #     self.center[1] + dx + 1 - (target_sz_copy[1] - 1) / 2,
+        #     self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
+        #     target_sz_copy[1], target_sz_copy[0]]
         box = [
-            self.center[1] + dx + 1 - (target_sz_copy[1] - 1) / 2,
-            self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
-            target_sz_copy[1], target_sz_copy[0]]
+            self.center[1] + 1 - (target_sz_copy[1] - 1) / 2,
+            self.center[0] + 1 - (target_sz_copy[0] - 1) / 2,
+            int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
+        # box = [
+        #     self.originxy[0] + int(dx),
+        #     self.originxy[1] + int(dy),
+        #     int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
+
         # self.history = self.history[1:]
         # self.history.append(box)
         box = np.array(box)
@@ -306,7 +307,9 @@ class TrackerSiamFC(Tracker):
         np.save('feature.npy', np.array(self.feature))
         np.save('feature_num.npy', np.array(self.feature_num))
 
-    def track(self, img_files, box, visualize=False, rnn_flag=1, feature_flag=1):
+    def track(self, img_files, box, visualize=False, rnn_flag=0, feature_flag=0):
+        self.originxy = box[:2]
+        self.originwh = box[2:]
         self.rnn_flag = rnn_flag
         self.feature_flag = feature_flag
         frame_num = len(img_files)
@@ -338,8 +341,8 @@ class TrackerSiamFC(Tracker):
             tmp = []
             tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
             tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
-            tmp.append(batch[3][k][2]/batch[2][k][2]-1)
-            tmp.append(batch[3][k][3]/batch[2][k][3]-1)
+            tmp.append(np.log(batch[3][k][2]/batch[2][k][2]))
+            tmp.append(np.log(batch[3][k][3]/batch[2][k][3]))
             label_dxywh.append(tmp)
         label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
         # print('label ', label_dxywh[0])
@@ -353,12 +356,13 @@ class TrackerSiamFC(Tracker):
             # inference
             # responses = self.net(z, x)
             responses, dxywh = self.net(z, x)
+            # print(responses[0])
             # print('dxywh ',dxywh[0])
 
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
-            reg_loss = self.reg_loss(dxywh, label_dxywh)*2
+            reg_loss = self.reg_loss(dxywh, label_dxywh)
             print('cls_loss ', loss, 'reg_loss ', reg_loss)
             loss += reg_loss
 
@@ -393,7 +397,7 @@ class TrackerSiamFC(Tracker):
         dataloader = DataLoader(
             dataset,
             batch_size=self.cfg.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=self.cfg.num_workers,
             pin_memory=self.cuda,
             drop_last=True)
