@@ -14,6 +14,12 @@ class SiamFC(nn.Module):
         super(SiamFC, self).__init__()
         self.out_scale = out_scale
         self.conv_11 = nn.Conv2d(256,1,1,1)
+        self.update = nn.Sequential(
+            nn.Conv2d(768, 96, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(96, 256, 1),
+            # nn.LocalResponseNorm(size=5, alpha=0.0001, beta=0.75, k=1),
+        )
     
     def forward(self, z, x):
         return self._fast_xcorr(z, x) * self.out_scale
@@ -28,9 +34,8 @@ class SiamFC(nn.Module):
             tmp = self.conv_11(tmp)
             concat.append(tmp)
 
-        # print()
         concat = torch.cat(concat,0)
-        # print(concat)
+        # print(concat.shape)
         return concat
 
 

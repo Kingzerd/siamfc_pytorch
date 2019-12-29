@@ -67,10 +67,10 @@ class Pair(Dataset):
         elif n == 2:
             return indices[0], indices[1]
         else:
-            for i in range(100):
+            for i in range(1000):
                 rand_z, rand_x = np.sort(
                     np.random.choice(indices, 2, replace=False))
-                if rand_x - rand_z < 100:
+                if rand_x - rand_z < 10:
                     break
             else:
                 rand_z = np.random.choice(indices)

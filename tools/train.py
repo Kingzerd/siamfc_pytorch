@@ -10,6 +10,5 @@ if __name__ == '__main__':
     # root_dir = os.path.abspath('~/data/GOT-10k')
     root_dir = 'H:/datasets/GOT-10k'
     seqs = GOT10k(root_dir, subset='train', return_meta=True)
-
     tracker = TrackerSiamFC()
     tracker.train_over(seqs)

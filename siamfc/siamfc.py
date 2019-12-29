@@ -21,6 +21,7 @@ from .rnn import Rnn
 from .losses import BalancedLoss
 from .datasets import Pair
 from .transforms import SiamFCTransforms
+from . import GIoUloss
 # from timeseries import PredictNet
 
 __all__ = ['TrackerSiamFC']
@@ -78,6 +79,7 @@ class TrackerSiamFC(Tracker):
         # setup criterion
         self.criterion = BalancedLoss()
         self.reg_loss = nn.SmoothL1Loss()
+        self.giou_loss = GIoUloss.GiouLoss()
 
         # setup optimizer
         # self.optimizer = optim.SGD(
@@ -263,14 +265,12 @@ class TrackerSiamFC(Tracker):
         # print('regression: ', dxywh, np.exp(dxywh[2]), np.exp(dxywh[3]))
         dx = dxywh[0] * self.target_sz[1]
         dy = dxywh[1] * self.target_sz[0]
-        print('regression: ', dx, dy, np.exp(dxywh[2]), np.exp(dxywh[3]))
+        print('regression: ', dxywh[0], dxywh[1], np.exp(dxywh[2]), np.exp(dxywh[3]))
         scale_factor = scale
         # self.target_sz *= scale_factor
         target_sz_copy = self.target_sz * scale_factor
         # self.z_sz *= scale_factor
         # self.x_sz *= scale_factor
-        # self.originwh[0] *= np.exp(dxywh[2])
-        # self.originwh[1] *= np.exp(dxywh[3])
 
         # return 1-indexed and left-top based bounding box
         # box = [
@@ -278,13 +278,17 @@ class TrackerSiamFC(Tracker):
         #     self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
         #     target_sz_copy[1], target_sz_copy[0]]
         box = [
-            self.center[1] + 1 - (target_sz_copy[1] - 1) / 2,
-            self.center[0] + 1 - (target_sz_copy[0] - 1) / 2,
+            self.center[1] + dx+1 - (target_sz_copy[1] - 1) / 2,
+            self.center[0] + dy+1 - (target_sz_copy[0] - 1) / 2,
             int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
         # box = [
-        #     self.originxy[0] + int(dx),
-        #     self.originxy[1] + int(dy),
-        #     int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
+        #     int(self.originxy[0]),
+        #     int(self.originxy[1]),
+        #     int(self.originwh[0]), int(self.originwh[1])]
+        # self.originxy[0] += int(dx)
+        # self.originxy[1] += int(dy)
+        # self.originwh[0] *= np.exp(dxywh[2])
+        # self.originwh[1] *= np.exp(dxywh[3])
 
         # self.history = self.history[1:]
         # self.history.append(box)
@@ -337,12 +341,19 @@ class TrackerSiamFC(Tracker):
         self.net.train(backward)
 
         label_dxywh = []
+        # for k in range(self.cfg.batch_size):
+        #     tmp = []
+        #     tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
+        #     tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
+        #     tmp.append(np.log(batch[3][k][2]/batch[2][k][2]))
+        #     tmp.append(np.log(batch[3][k][3]/batch[2][k][3]))
+        #     label_dxywh.append(tmp)
         for k in range(self.cfg.batch_size):
             tmp = []
-            tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
-            tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
-            tmp.append(np.log(batch[3][k][2]/batch[2][k][2]))
-            tmp.append(np.log(batch[3][k][3]/batch[2][k][3]))
+            tmp.append(batch[3][k][0])
+            tmp.append(batch[3][k][1])
+            tmp.append(batch[3][k][0]+batch[3][k][2])
+            tmp.append(batch[3][k][0]+batch[3][k][3])
             label_dxywh.append(tmp)
         label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
         # print('label ', label_dxywh[0])
@@ -351,6 +362,7 @@ class TrackerSiamFC(Tracker):
         z = batch[0].to(self.device, non_blocking=self.cuda)
         x = batch[1].to(self.device, non_blocking=self.cuda)
         label_dxywh = label_dxywh.to(self.device, non_blocking=self.cuda)
+        # label_dxywh = (label_dxywh-torch.min(label_dxywh))/(torch.max(label_dxywh)-torch.min(label_dxywh))
 
         with torch.set_grad_enabled(backward):
             # inference
@@ -362,7 +374,32 @@ class TrackerSiamFC(Tracker):
             # calculate loss
             labels = self._create_labels(responses.size())
             loss = self.criterion(responses, labels)
-            reg_loss = self.reg_loss(dxywh, label_dxywh)
+            # dxywh = dxywh.detach().cpu().numpy()
+            for k in range(dxywh.shape[0]):
+                dxywh[k][0] = dxywh[k][0] * (label_dxywh[k][2]-label_dxywh[k][0]) + (label_dxywh[k][2]+label_dxywh[k][0])/2
+                dxywh[k][1] = dxywh[k][1] * (label_dxywh[k][3]-label_dxywh[k][1]) + (label_dxywh[k][3]+label_dxywh[k][1])/2
+                dxywh[k][2] = torch.exp(dxywh[k][2]) * (label_dxywh[k][2]-label_dxywh[k][0])
+                dxywh[k][3] = torch.exp(dxywh[k][3]) * (label_dxywh[k][3]-label_dxywh[k][1])
+                if dxywh[k][2] <=0:
+                    dxywh[k][2] = label_dxywh[k][2]
+                if dxywh[k][3] <=0:
+                    dxywh[k][3] = label_dxywh[k][3]
+            for i in range(dxywh.shape[0]):
+                dxywh[i][0] -= dxywh[i][2]/2
+                dxywh[i][1] -= dxywh[i][3]/2
+                if dxywh[i][0] < 0:
+                    dxywh[i][0] = 0
+                if dxywh[i][1] < 0:
+                    dxywh[i][1] = 0
+                dxywh[i][2] += dxywh[i][0]
+                dxywh[i][3] += dxywh[i][1]
+            # dxywh = (dxywh - torch.min(dxywh)) / (torch.max(dxywh) - torch.min(dxywh))
+            # xyxy = torch.autograd.Variable(torch.from_numpy(np.array(xyxy)).float(), requires_grad=True)
+            # reg_loss = self.reg_loss(dxywh.float(), label_dxywh.float())
+
+            # print(dxywh, label_dxywh)
+            reg_loss = self.giou_loss(dxywh, label_dxywh)
+            # print(reg_loss)
             print('cls_loss ', loss, 'reg_loss ', reg_loss)
             loss += reg_loss
 
@@ -401,7 +438,6 @@ class TrackerSiamFC(Tracker):
             num_workers=self.cfg.num_workers,
             pin_memory=self.cuda,
             drop_last=True)
-
         # loop over epochs
         for epoch in range(self.cfg.epoch_num):
             # update lr at each epoch
@@ -419,7 +455,7 @@ class TrackerSiamFC(Tracker):
                 os.makedirs(save_dir)
             if (epoch+1) % 5 == 0:
                 net_path = os.path.join(
-                    save_dir, 'siamfc_alexnet_eee%d.pth' % (epoch + 1))
+                    save_dir, 'siamfc_alexnet_eeee%d.pth' % (epoch + 1))
                 torch.save(self.net.state_dict(), net_path)
 
     def _create_labels(self, size):
