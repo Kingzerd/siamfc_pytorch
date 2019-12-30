@@ -8,16 +8,16 @@ from siamfc import TrackerSiamFC
 
 
 if __name__ == '__main__':
-    net_path = 'pretrained/siamfc_alexnet_eeee20.pth'
+    net_path = 'pretrained/siamfc_alexnet_eee20.pth'
     tracker = TrackerSiamFC(net_path=net_path)
 
     # seq_dir = os.path.expanduser('~/data/OTB/Crossing')
     path = 'H:/datasets/OTB100/'
     for i in os.listdir(path):
         # seq_dir = path + i
-        seq_dir = 'H:/datasets/OTB100/BlurBody'
+        seq_dir = 'H:/datasets/OTB100/Bolt'
         img_files = sorted(glob.glob(seq_dir + '/img/*.jpg'))
         anno = np.loadtxt(seq_dir + '/groundtruth_rect.txt', delimiter=',')
 
-        tracker.track(img_files, anno[0], visualize=True, rnn_flag=0, feature_flag=0)
+        tracker.track(img_files, anno[0], visualize=True, rnn_flag=0, feature_flag=1)
     # tracker.write_feature()

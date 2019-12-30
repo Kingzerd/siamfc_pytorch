@@ -18,6 +18,7 @@ from . import ops
 from .backbones import AlexNetV1
 from .heads import SiamFC
 from .rnn import Rnn
+from .updatenet import UpdateNet
 from .losses import BalancedLoss
 from .datasets import Pair
 from .transforms import SiamFCTransforms
@@ -29,18 +30,34 @@ __all__ = ['TrackerSiamFC']
 
 class Net(nn.Module):
 
-    def __init__(self, backbone, head, regression):
+    def __init__(self, backbone, head, update, regression):
         super(Net, self).__init__()
         self.backbone = backbone
         self.head = head
+        self.update = update
         self.regression = regression
+        self.conv1 = nn.Conv2d(256, 1, 1, 1)
 
-    def forward(self, z, x):
+    def forward(self, z, x, template=None):
         z = self.backbone(z)
         x = self.backbone(x)
-        score = self.head(z, x)
-        dxywh = self.regression(score.squeeze(1))
-        return score, dxywh
+        next_rnn, concat = self.head(z, x)
+        # if template is None:
+        #     template = concat
+        # else:
+        #     tmp = torch.cat([concat, template], 1)
+        #     template = self.update(tmp)
+
+        # if template is None:
+        #     template = concat
+        # tmp = torch.cat([concat, template.detach()], 1)
+        # new_template = self.update(tmp)
+        # score = self.conv1(new_template)
+
+        score = self.conv1(concat)
+        dxywh = self.regression(next_rnn.squeeze(1))
+        # return score, dxywh, new_template
+        return score, dxywh, template
 
 
 class TrackerSiamFC(Tracker):
@@ -60,6 +77,7 @@ class TrackerSiamFC(Tracker):
         self.net = Net(
             backbone=AlexNetV1(),
             head=SiamFC(self.cfg.feature_scale),
+            update=UpdateNet(),
             regression=Rnn(
                 input_size=self.cfg.input_size,
                 hidden_size=self.cfg.hidden_size,
@@ -68,7 +86,8 @@ class TrackerSiamFC(Tracker):
                 out_scale=self.cfg.out_scale
             ))
         ops.init_weights(self.net)
-        self.h_state = None
+        # self.h_state = None
+        self.template = None
 
         # load checkpoint if provided
         if net_path is not None:
@@ -113,7 +132,7 @@ class TrackerSiamFC(Tracker):
             'scale_step': 1.0375,
             'scale_lr': 0.59,
             'scale_penalty': 0.9745,
-            'window_influence': 0.176,
+            'window_influence': 0.176,  #0.176
             'response_sz': 17,
             'response_up': 16,
             'total_stride': 8,
@@ -188,6 +207,7 @@ class TrackerSiamFC(Tracker):
         z = torch.from_numpy(z).to(
             self.device).permute(2, 0, 1).unsqueeze(0).float()
         self.kernel = self.net.backbone(z)
+        # print(self.kernel.shape)
 
     @torch.no_grad()
     def update(self, img):
@@ -206,12 +226,14 @@ class TrackerSiamFC(Tracker):
 
         # responses
         x = self.net.backbone(x)
-        responses = self.net.head(self.kernel, x)
+        forrnn, concat = self.net.head(self.kernel, x)
+        # if self.template is None:
+        #     self.template = concat.clone()
+        # templa = self.net.update(torch.cat([concat, self.template.detach()], 1))
+        # self.template = templa.clone()
+        # responses = self.net.conv1(templa)
+        responses = self.net.conv1(concat)
         responses = responses.squeeze(1).cpu().numpy()
-
-        initials = responses.copy()
-        initials[:self.cfg.scale_num // 2] *= self.cfg.scale_penalty
-        initials[self.cfg.scale_num // 2 + 1:] *= self.cfg.scale_penalty
 
         # upsample responses and penalize scale changes
         responses = np.stack([cv2.resize(
@@ -233,14 +255,14 @@ class TrackerSiamFC(Tracker):
         response = (1 - self.cfg.window_influence) * response + \
                    self.cfg.window_influence * self.hann_window
 
-        initial = initials[scale_id]
+        forrnn = forrnn[scale_id]
         # initial -= initial.min()
         # initial /= initial.sum() + 1e-16
         # initial /= (initial.max() - initial.min())
         # print(initial)
 
         # print(initial.shape)
-        dxywh = self.net.regression(torch.from_numpy(initial[np.newaxis, :]).to(self.device))
+        dxywh = self.net.regression(forrnn)
         dxywh = dxywh.detach().cpu().numpy()
         dxywh = dxywh[0]
         # print(dxywh.shape)
@@ -265,7 +287,7 @@ class TrackerSiamFC(Tracker):
         # print('regression: ', dxywh, np.exp(dxywh[2]), np.exp(dxywh[3]))
         dx = dxywh[0] * self.target_sz[1]
         dy = dxywh[1] * self.target_sz[0]
-        print('regression: ', dxywh[0], dxywh[1], np.exp(dxywh[2]), np.exp(dxywh[3]))
+        print('regression: ', dx, dy, np.exp(dxywh[2]), np.exp(dxywh[3]))
         scale_factor = scale
         # self.target_sz *= scale_factor
         target_sz_copy = self.target_sz * scale_factor
@@ -336,7 +358,7 @@ class TrackerSiamFC(Tracker):
         # self.feature_num.append(self.feature_count)
         return boxes, times
 
-    def train_step(self, batch, backward=True):
+    def train_step(self, batch, temp, backward=True):
         # set network mode
         self.net.train(backward)
 
@@ -367,13 +389,13 @@ class TrackerSiamFC(Tracker):
         with torch.set_grad_enabled(backward):
             # inference
             # responses = self.net(z, x)
-            responses, dxywh = self.net(z, x)
+            responses, dxywh, template = self.net(z, x, temp)
             # print(responses[0])
             # print('dxywh ',dxywh[0])
 
             # calculate loss
             labels = self._create_labels(responses.size())
-            loss = self.criterion(responses, labels)
+            cls_loss = self.criterion(responses, labels)
             # dxywh = dxywh.detach().cpu().numpy()
             for k in range(dxywh.shape[0]):
                 dxywh[k][0] = dxywh[k][0] * (label_dxywh[k][2]-label_dxywh[k][0]) + (label_dxywh[k][2]+label_dxywh[k][0])/2
@@ -400,16 +422,17 @@ class TrackerSiamFC(Tracker):
             # print(dxywh, label_dxywh)
             reg_loss = self.giou_loss(dxywh, label_dxywh)
             # print(reg_loss)
-            print('cls_loss ', loss, 'reg_loss ', reg_loss)
-            loss += reg_loss
+            print('cls_loss ', cls_loss, 'reg_loss ', reg_loss)
+            # loss += reg_loss
 
             if backward:
                 # back propagation
                 self.optimizer.zero_grad()
-                loss.backward()
+                cls_loss.backward(retain_graph=True)
+                reg_loss.backward()
                 self.optimizer.step()
 
-        return loss.item()
+        return (cls_loss+reg_loss).item(), template
 
     @torch.enable_grad()
     def train_over(self, seqs, val_seqs=None,
@@ -443,9 +466,10 @@ class TrackerSiamFC(Tracker):
             # update lr at each epoch
             self.lr_scheduler.step(epoch=epoch)
 
+            template = None
             # loop over dataloader
             for it, batch in enumerate(dataloader):
-                loss = self.train_step(batch, backward=True)
+                loss, template = self.train_step(batch, template, backward=True)
                 print('Epoch: {} [{}/{}] Loss: {:.5f}'.format(
                     epoch + 1, it + 1, len(dataloader), loss))
                 sys.stdout.flush()
@@ -455,7 +479,7 @@ class TrackerSiamFC(Tracker):
                 os.makedirs(save_dir)
             if (epoch+1) % 5 == 0:
                 net_path = os.path.join(
-                    save_dir, 'siamfc_alexnet_eeee%d.pth' % (epoch + 1))
+                    save_dir, 'siamfc_alexnet_eee%d.pth' % (epoch + 1))
                 torch.save(self.net.state_dict(), net_path)
 
     def _create_labels(self, size):

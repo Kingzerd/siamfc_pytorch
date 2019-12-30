@@ -95,26 +95,30 @@ def show_image(img, boxes=None, box_fmt='ltwh', colors=None,
 def print_feature_2(img, feature, boxes):
     plt.subplot(1, 2, 1)
     plt.imshow(img)
-    print(img.shape)
+    # print(img.shape)
+
     # currentAxis = plt.gca()
     # rect = patches.Rectangle((boxes[0], boxes[1]), boxes[2], boxes[3], linewidth=1, edgecolor='r', facecolor='none')
     # currentAxis.add_patch(rect)
+
     plt.subplot(1, 2, 2)
     plt.imshow(feature)
-    print(feature.shape)
+    # print(feature.shape)
     plt.show()
 
 
 def print_feature_3(img, feature, boxes, non_hann):
     plt.subplot(1, 3, 1)
     plt.imshow(img)
-    print(img.shape)
+    # print(img.shape)
+
     # currentAxis = plt.gca()
     # rect = patches.Rectangle((boxes[0], boxes[1]), boxes[2], boxes[3], linewidth=1, edgecolor='r', facecolor='none')
     # currentAxis.add_patch(rect)
+
     plt.subplot(1, 3, 2)
     plt.imshow(feature)
-    print(feature.shape)
+    # print(feature.shape)
     plt.subplot(1, 3, 3)
     plt.imshow(non_hann)
     plt.show()
