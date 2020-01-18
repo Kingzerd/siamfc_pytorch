@@ -373,7 +373,7 @@ class GiouLoss(nn.Module):
         loss = torch.sum(gious)
 
         if self.size_sum:
-            loss = loss
-        else:
             loss = loss / num
-        return 5*loss
+        else:
+            loss = loss
+        return loss

@@ -3,7 +3,7 @@ from __future__ import absolute_import, division
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import numpy as np
 
 __all__ = ['BalancedLoss', 'FocalLoss', 'GHMCLoss', 'OHNMLoss']
 
@@ -13,7 +13,7 @@ def log_sigmoid(x):
     # for x < 0: x - log(1 + exp(x))
     # for x = 0: 0 (extra term for gradient stability)
     return torch.clamp(x, max=0) - torch.log(1 + torch.exp(-torch.abs(x))) + \
-        0.5 * torch.clamp(x, min=0, max=0)
+           0.5 * torch.clamp(x, min=0, max=0)
 
 
 def log_minus_sigmoid(x):
@@ -21,7 +21,7 @@ def log_minus_sigmoid(x):
     # for x < 0:  0 - log(1 + exp(x))
     # for x = 0: 0 (extra term for gradient stability)
     return torch.clamp(-x, max=0) - torch.log(1 + torch.exp(-torch.abs(x))) + \
-        0.5 * torch.clamp(x, min=0, max=0)
+           0.5 * torch.clamp(x, min=0, max=0)
 
 
 class BalancedLoss(nn.Module):
@@ -29,7 +29,7 @@ class BalancedLoss(nn.Module):
     def __init__(self, neg_weight=1.0):
         super(BalancedLoss, self).__init__()
         self.neg_weight = neg_weight
-    
+
     def forward(self, input, target):
         pos_mask = (target == 1)
         neg_mask = (target == 0)
@@ -48,7 +48,7 @@ class FocalLoss(nn.Module):
     def __init__(self, gamma=2):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
-    
+
     def forward(self, input, target):
         pos_log_sig = log_sigmoid(input)
         neg_log_sig = log_minus_sigmoid(input)
@@ -58,8 +58,8 @@ class FocalLoss(nn.Module):
         neg_weight = torch.pow(prob, self.gamma)
 
         loss = -(target * pos_weight * pos_log_sig + \
-            (1 - target) * neg_weight * neg_log_sig)
-        
+                 (1 - target) * neg_weight * neg_log_sig)
+
         avg_weight = target * pos_weight + (1 - target) * neg_weight
         loss /= avg_weight.mean()
 
@@ -67,7 +67,7 @@ class FocalLoss(nn.Module):
 
 
 class GHMCLoss(nn.Module):
-    
+
     def __init__(self, bins=30, momentum=0.5):
         super(GHMCLoss, self).__init__()
         self.bins = bins
@@ -76,7 +76,7 @@ class GHMCLoss(nn.Module):
         self.edges[-1] += 1e-6
         if momentum > 0:
             self.acc_sum = [0.0 for _ in range(bins)]
-    
+
     def forward(self, input, target):
         edges = self.edges
         mmt = self.momentum
@@ -93,7 +93,7 @@ class GHMCLoss(nn.Module):
             if num_in_bin > 0:
                 if mmt > 0:
                     self.acc_sum[i] = mmt * self.acc_sum[i] \
-                        + (1 - mmt) * num_in_bin
+                                      + (1 - mmt) * num_in_bin
                     weights[inds] = tot / self.acc_sum[i]
                 else:
                     weights[inds] = tot / num_in_bin
@@ -103,16 +103,16 @@ class GHMCLoss(nn.Module):
 
         loss = F.binary_cross_entropy_with_logits(
             input, target, weights, reduction='sum') / tot
-        
+
         return loss
 
 
 class OHNMLoss(nn.Module):
-    
+
     def __init__(self, neg_ratio=3.0):
         super(OHNMLoss, self).__init__()
         self.neg_ratio = neg_ratio
-    
+
     def forward(self, input, target):
         pos_logits = input[target > 0]
         pos_labels = target[target > 0]
@@ -129,5 +129,32 @@ class OHNMLoss(nn.Module):
             torch.cat([pos_logits, neg_logits]),
             torch.cat([pos_labels, neg_labels]),
             reduction='mean')
-        
+
         return loss
+
+
+def gussian_normal(x, y, z):
+    return torch.exp(-torch.pow((x - y) / (np.sqrt(2) * z), 2)) / (np.sqrt(2 * np.pi) * z)
+
+
+class Regressloss(nn.Module):
+
+    def __init__(self):
+        super(Regressloss, self).__init__()
+        # self.reg_loss = nn.SmoothL1Loss()
+
+    def forward(self, input, target):
+        num = input.shape[0]
+        # loss = self.reg_loss(input, target)
+
+        gussian_loss = 0
+        for i in range(num):
+            gussian_loss += gussian_normal(input[i][0], 0, 0.01) + gussian_normal(input[i][1], 0, 0.01) + gussian_normal(torch.exp(input[i][2]), 1, 0.01) + gussian_normal(torch.exp(input[i][3]), 1, 0.01)
+        # print(gussian_loss)
+        return gussian_loss/(num * 4)
+
+# func = Regressloss()
+# x = torch.Tensor([[149.40, 535.86, 1.01, 0.99]])
+# y = torch.Tensor([[208, 509, 0.96, 1.03]])
+# cri = func(x, y)
+# print(cri)

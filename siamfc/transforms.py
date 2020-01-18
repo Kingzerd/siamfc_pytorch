@@ -125,12 +125,35 @@ class SiamFCTransforms(object):
             RocoverSize(),
             ToTensor()])
     
-    def __call__(self, z, x, box_z, box_x):
+    def __call__(self, z, x, box_z, box_x, z_copy, t):
+        box_x_copy = box_x.copy()
+        if t == 1:
+            box_x_copy[0] += 24
+            box_x_copy[1] += 24
+        elif t ==2:
+            box_x_copy[1] +=24
+        elif t ==3:
+            box_x_copy[0] -= 24
+            box_x_copy[1] += 24
+        elif t ==4:
+            box_x_copy[0] += 24
+        elif t ==6:
+            box_x_copy[0] -= 24
+        elif t ==7:
+            box_x_copy[0] += 24
+            box_x_copy[1] -= 24
+        elif t ==8:
+            box_x_copy[1] -= 24
+        elif t ==9:
+            box_x_copy[0] -= 24
+            box_x_copy[1] -= 24
         z = self._crop(z, box_z, self.instance_sz)
-        x = self._crop(x, box_x, self.instance_sz)
+        x = self._crop(x, box_x_copy, self.instance_sz)
+        z_copy = self._crop(z_copy, box_z, self.instance_sz)
         z = self.transforms_z(z)
         x = self.transforms_x(x)
-        return z, x, box_z, box_x
+        z_copy = self.transforms_x(z_copy)
+        return z, x, box_z, box_x, z_copy, t
     
     def _crop(self, img, box, out_size):
         # convert box to 0-indexed and center based [y, x, h, w]

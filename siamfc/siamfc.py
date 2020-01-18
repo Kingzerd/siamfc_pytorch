@@ -19,7 +19,7 @@ from .backbones import AlexNetV1
 from .heads import SiamFC
 from .rnn import Rnn
 from .updatenet import UpdateNet
-from .losses import BalancedLoss
+from .losses import BalancedLoss, Regressloss
 from .datasets import Pair
 from .transforms import SiamFCTransforms
 from . import GIoUloss
@@ -36,33 +36,27 @@ class Net(nn.Module):
         self.head = head
         self.update = update
         self.regression = regression
-        self.conv1 = nn.Conv2d(256, 1, 1, 1)
 
-    def forward(self, z, x, template=None):
+    def forward(self, z, x, z_copy, template=None):
         z = self.backbone(z)
         x = self.backbone(x)
-        next_rnn, concat = self.head(z, x)
-        # if template is None:
-        #     template = concat
-        # else:
-        #     tmp = torch.cat([concat, template], 1)
-        #     template = self.update(tmp)
+        z_copy = self.backbone(z_copy)
+        if template is None:
+            template = z.clone()
+        tmp = torch.cat([z, template.detach()], 1)
+        new_template = self.update(tmp)
+        # next_rnn, concat = self.head(new_template, x)
+        next_rnn, score = self.head(z, x, x-z_copy)
 
-        # if template is None:
-        #     template = concat
-        # tmp = torch.cat([concat, template.detach()], 1)
-        # new_template = self.update(tmp)
-        # score = self.conv1(new_template)
-
-        score = self.conv1(concat)
         dxywh = self.regression(next_rnn.squeeze(1))
+        return score, dxywh, new_template
         # return score, dxywh, new_template
-        return score, dxywh, template
+        # return score, dxywh, template
 
 
 class TrackerSiamFC(Tracker):
 
-    def __init__(self, net_path=None, **kwargs):
+    def __init__(self, net_path=None, keep_train=False, **kwargs):
         super(TrackerSiamFC, self).__init__('SiamFC', True)
         self.cfg = self.parse_args(**kwargs)
 
@@ -98,6 +92,7 @@ class TrackerSiamFC(Tracker):
         # setup criterion
         self.criterion = BalancedLoss()
         self.reg_loss = nn.SmoothL1Loss()
+        self.gussian_loss = Regressloss()
         self.giou_loss = GIoUloss.GiouLoss()
 
         # setup optimizer
@@ -118,6 +113,8 @@ class TrackerSiamFC(Tracker):
         self.lr_scheduler = ExponentialLR(self.optimizer, gamma)
         self.feature = []
         self.feature_num = []
+        if keep_train:
+            self.net.load_state_dict(torch.load('pretrained/siamfc_alexnet_eeee20.pth'))
 
     def parse_args(self, **kwargs):
         # default parameters
@@ -141,7 +138,7 @@ class TrackerSiamFC(Tracker):
             'batch_size': 8,
             'num_workers': 16,
             'initial_lr': 1e-3,
-            'ultimate_lr': 1e-6,
+            'ultimate_lr': 1e-5,
             'weight_decay': 5e-4,
             'momentum': 0.9,
             'r_pos': 16,
@@ -171,12 +168,12 @@ class TrackerSiamFC(Tracker):
         # net_path = '../timeseries/pretrained/predictnet_e2000.pth'
         # self.predictnet = PredictNet(net_path=net_path)
 
-        # convert box to 0-indexed and center based [y, x, h, w]
-        box = np.array([
-            box[1] - 1 + (box[3] - 1) / 2,
-            box[0] - 1 + (box[2] - 1) / 2,
-            box[3], box[2]], dtype=np.float32)
-        self.center, self.target_sz = box[:2], box[2:]
+        # # convert box to 0-indexed and center based [y, x, h, w]
+        # box = np.array([
+        #     box[1] - 1 + (box[3] - 1) / 2,
+        #     box[0] - 1 + (box[2] - 1) / 2,
+        #     box[3], box[2]], dtype=np.float32)
+        # self.center, self.target_sz = box[:2], box[2:]
 
         # create hanning window
         self.upscale_sz = self.cfg.response_up * self.cfg.response_sz
@@ -190,24 +187,67 @@ class TrackerSiamFC(Tracker):
             -(self.cfg.scale_num // 2),
             self.cfg.scale_num // 2, self.cfg.scale_num)
 
-        # exemplar and search sizes
-        context = self.cfg.context * np.sum(self.target_sz)
-        self.z_sz = np.sqrt(np.prod(self.target_sz + context))
-        self.x_sz = self.z_sz * \
-                    self.cfg.instance_sz / self.cfg.exemplar_sz
+        self.update_template(img, box, 'first')
+        # # exemplar and search sizes
+        # context = self.cfg.context * np.sum(self.target_sz)
+        # self.z_sz = np.sqrt(np.prod(self.target_sz + context))
+        # self.x_sz = self.z_sz * \
+        #             self.cfg.instance_sz / self.cfg.exemplar_sz
+        #
+        # # exemplar image
+        # self.avg_color = np.mean(img, axis=(0, 1))
+        # z = ops.crop_and_resize(
+        #     img, self.center, self.z_sz,
+        #     out_size=self.cfg.exemplar_sz,
+        #     border_value=self.avg_color)
+        #
+        # # exemplar features
+        # z = torch.from_numpy(z).to(
+        #     self.device).permute(2, 0, 1).unsqueeze(0).float()
+        # self.kernel = self.net.backbone(z)
 
+    @torch.no_grad()
+    def update_template(self, img, box, flag='then'):
+        # set to evaluation mode
+        self.net.eval()
+
+        # convert box to 0-indexed and center based [y, x, h, w]
+        box = np.array([
+            box[1] - 1 + (box[3] - 1) / 2,
+            box[0] - 1 + (box[2] - 1) / 2,
+            box[3], box[2]], dtype=np.float32)
+        if flag == 'first':
+            self.center, self.target_sz = box[:2], box[2:]
+        center, target_sz = box[:2], box[2:]
+
+        # exemplar and search sizes
+        context = self.cfg.context * np.sum(target_sz)
+        if flag == 'first':
+            self.z_sz = np.sqrt(np.prod(target_sz + context))
+            self.x_sz = self.z_sz * \
+                    self.cfg.instance_sz / self.cfg.exemplar_sz
+        z_sz = np.sqrt(np.prod(target_sz + context))
+        x_sz = self.z_sz * \
+                    self.cfg.instance_sz / self.cfg.exemplar_sz
         # exemplar image
         self.avg_color = np.mean(img, axis=(0, 1))
         z = ops.crop_and_resize(
-            img, self.center, self.z_sz,
+            img, center, z_sz,
             out_size=self.cfg.exemplar_sz,
             border_value=self.avg_color)
-
+        z_copy = ops.crop_and_resize(
+            img, center, x_sz,
+            out_size=self.cfg.instance_sz,
+            border_value=self.avg_color)
         # exemplar features
         z = torch.from_numpy(z).to(
             self.device).permute(2, 0, 1).unsqueeze(0).float()
+        z_copy = torch.from_numpy(z_copy).to(
+            self.device).permute(2, 0, 1).unsqueeze(0).float()
+        if flag == 'first':
+            self.initial_kernel = self.net.backbone(z)
+            self.initial_frnn = self.net.backbone(z_copy)
         self.kernel = self.net.backbone(z)
-        # print(self.kernel.shape)
 
     @torch.no_grad()
     def update(self, img):
@@ -226,14 +266,24 @@ class TrackerSiamFC(Tracker):
 
         # responses
         x = self.net.backbone(x)
-        forrnn, concat = self.net.head(self.kernel, x)
-        # if self.template is None:
-        #     self.template = concat.clone()
-        # templa = self.net.update(torch.cat([concat, self.template.detach()], 1))
-        # self.template = templa.clone()
-        # responses = self.net.conv1(templa)
-        responses = self.net.conv1(concat)
+
+        if self.template is None:
+            self.template = self.kernel.clone()
+        templa = self.net.update(torch.cat([self.kernel, self.template], 1))
+        # forrnn, concat = self.net.head(templa, x)
+        forrnn, responses = self.net.head(self.initial_kernel.repeat(len(self.scale_factors),1,1,1), x, x-self.initial_frnn)
+        self.template = templa.clone().detach()
         responses = responses.squeeze(1).cpu().numpy()
+
+        # r = responses.copy()
+        # index = -1
+        # for response in responses:
+        #     index += 1
+        #     for i in range(response.shape[0]):
+        #         for j in range(response.shape[1]):
+        #             r[index][i][j] = max(response[i]) + max(response.T[j])
+        # responses = r
+        # print(responses.shape)
 
         # upsample responses and penalize scale changes
         responses = np.stack([cv2.resize(
@@ -265,11 +315,12 @@ class TrackerSiamFC(Tracker):
         dxywh = self.net.regression(forrnn)
         dxywh = dxywh.detach().cpu().numpy()
         dxywh = dxywh[0]
-        # print(dxywh.shape)
         # self.feature.append(initial)
         # self.feature_count += 1
 
         loc = np.unravel_index(response.argmax(), response.shape)
+        dxywh_loc = np.array(loc)
+        dxywh = dxywh[int(round(dxywh_loc[0]/16.0)),int(round(dxywh_loc[1]/16.0))]
 
         # locate target center
         disp_in_response = np.array(loc) - (self.upscale_sz - 1) / 2
@@ -281,8 +332,10 @@ class TrackerSiamFC(Tracker):
 
         # update target size
         scale = (1 - self.cfg.scale_lr) * 1.0 + \
-            self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt((1+dxywh[2]) * (1+dxywh[3]))
-        # print(self.target_sz, scale)
+            self.cfg.scale_lr * np.sqrt(np.exp(dxywh[2]) * np.exp(dxywh[3]))
+        # scale = (1 - self.cfg.scale_lr) * 1.0 + \
+        #         self.cfg.scale_lr * self.scale_factors[scale_id] * np.sqrt(np.exp(dxywh[2]) * np.exp(dxywh[3]))
+        print('scale: ', scale)
 
         # print('regression: ', dxywh, np.exp(dxywh[2]), np.exp(dxywh[3]))
         dx = dxywh[0] * self.target_sz[1]
@@ -290,19 +343,24 @@ class TrackerSiamFC(Tracker):
         print('regression: ', dx, dy, np.exp(dxywh[2]), np.exp(dxywh[3]))
         scale_factor = scale
         # self.target_sz *= scale_factor
-        target_sz_copy = self.target_sz * scale_factor
-        # self.z_sz *= scale_factor
-        # self.x_sz *= scale_factor
+        # self.target_sz[1] *= np.exp(dxywh[2])
+        # self.target_sz[0] *= np.exp(dxywh[3])
+        target_sz_copy = self.target_sz.copy()
+        target_sz_copy[1] *= np.exp(dxywh[2])
+        target_sz_copy[0] *= np.exp(dxywh[3])
+        # self.z_sz *= (np.exp(dxywh[2])+np.exp(dxywh[3]))/2
+        # self.x_sz *= (np.exp(dxywh[2])+np.exp(dxywh[3]))/2
 
         # return 1-indexed and left-top based bounding box
-        # box = [
-        #     self.center[1] + dx + 1 - (target_sz_copy[1] - 1) / 2,
-        #     self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
-        #     target_sz_copy[1], target_sz_copy[0]]
         box = [
-            self.center[1] + dx+1 - (target_sz_copy[1] - 1) / 2,
-            self.center[0] + dy+1 - (target_sz_copy[0] - 1) / 2,
-            int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
+            self.center[1] + dx + 1 - (target_sz_copy[1] - 1) / 2,
+            self.center[0] + dy + 1 - (target_sz_copy[0] - 1) / 2,
+            target_sz_copy[1], target_sz_copy[0]]
+        # box = [
+        #     self.center[1] + dy+1 - (target_sz_copy[1] - 1) / 2,
+        #     self.center[0] + dx+1 - (target_sz_copy[0] - 1) / 2,
+        #     int(self.originwh[0] * np.exp(dxywh[2])), int(self.originwh[1] * np.exp(dxywh[3]))]
+        self.update_template(img, [box[1], box[0], box[3], box[2]])
         # box = [
         #     int(self.originxy[0]),
         #     int(self.originxy[1]),
@@ -362,77 +420,123 @@ class TrackerSiamFC(Tracker):
         # set network mode
         self.net.train(backward)
 
+        length = 1
+        shift = 3
+        length_repeat = (length*2+1)**2
+
         label_dxywh = []
-        # for k in range(self.cfg.batch_size):
-        #     tmp = []
-        #     tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
-        #     tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
-        #     tmp.append(np.log(batch[3][k][2]/batch[2][k][2]))
-        #     tmp.append(np.log(batch[3][k][3]/batch[2][k][3]))
-        #     label_dxywh.append(tmp)
+        for k in range(self.cfg.batch_size):
+            tmp = []
+            tmp.append((batch[3][k][0]-batch[2][k][0])/batch[2][k][2])
+            tmp.append((batch[3][k][1]-batch[2][k][1])/batch[2][k][3])
+            tmp.append(np.log(batch[3][k][2]/batch[2][k][2]))
+            tmp.append(np.log(batch[3][k][3]/batch[2][k][3]))
+            for cou in range(length_repeat):
+                label_dxywh.append(tmp)
+            # print(np.exp(tmp[2]), np.exp(tmp[3]))
+        label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
+
+        label_xyxy = []
         for k in range(self.cfg.batch_size):
             tmp = []
             tmp.append(batch[3][k][0])
             tmp.append(batch[3][k][1])
             tmp.append(batch[3][k][0]+batch[3][k][2])
-            tmp.append(batch[3][k][0]+batch[3][k][3])
-            label_dxywh.append(tmp)
-        label_dxywh = torch.from_numpy(np.array(label_dxywh)).float()
+            tmp.append(batch[3][k][1]+batch[3][k][3])
+            for cou in range(length_repeat):
+                label_xyxy.append(tmp)
+        label_xyxy = torch.from_numpy(np.array(label_xyxy)).float()
         # print('label ', label_dxywh[0])
 
         # parse batch data
         z = batch[0].to(self.device, non_blocking=self.cuda)
         x = batch[1].to(self.device, non_blocking=self.cuda)
+        z_copy = batch[4].to(self.device, non_blocking=self.cuda)
+        label_xyxy = label_xyxy.to(self.device, non_blocking=self.cuda)
         label_dxywh = label_dxywh.to(self.device, non_blocking=self.cuda)
         # label_dxywh = (label_dxywh-torch.min(label_dxywh))/(torch.max(label_dxywh)-torch.min(label_dxywh))
 
         with torch.set_grad_enabled(backward):
             # inference
             # responses = self.net(z, x)
-            responses, dxywh, template = self.net(z, x, temp)
-            # print(responses[0])
-            # print('dxywh ',dxywh[0])
+            responses, dxywh, template = self.net(z, x, z_copy, temp)
+            # b, c, h, w = dxywh.size()
 
+            flagg = 0
+            for cou in range(self.cfg.batch_size):
+                # print(batch[5][cou])
+                if batch[5][cou] == 1:
+                    compute = dxywh[cou,9-length-shift:9+length-shift+1,9-length-shift:9+length-shift+1,:]
+                elif batch[5][cou] == 2:
+                    compute = dxywh[cou,9-length-shift:9+length-shift+1,9-length:9+length+1,:]
+                elif batch[5][cou] == 3:
+                    compute = dxywh[cou,9-length-shift:9+length-shift+1,9+shift-length:9+length+shift+1,:]
+                elif batch[5][cou] == 4:
+                    compute = dxywh[cou,9-length:9+length+1,9-length-shift:9+length-shift+1,:]
+                elif batch[5][cou] == 6:
+                    compute = dxywh[cou,9-length:9+length+1,9+shift-length:9+length+shift+1,:]
+                elif batch[5][cou] == 7:
+                    compute = dxywh[cou,9+shift-length:9+length+shift+1,9-length-shift:9+length-shift+1,:]
+                elif batch[5][cou] == 8:
+                    compute = dxywh[cou,9+shift-length:9+length+shift+1,9-length:9+length+1,:]
+                elif batch[5][cou] == 9:
+                    compute = dxywh[cou,9+shift-length:9+length+shift+1,9+shift-length:9+length+shift+1,:]
+                else:
+                    compute = dxywh[cou,9-length:9+length+1,9-length:9+length+1,:]
+                # print(compute.shape)
+                compute = compute.clone().view(-1,4)
+                if flagg == 0:
+                    final_dxywh = compute
+                    flagg += 1
+                else:
+                    final_dxywh = torch.cat((final_dxywh, compute), 0)
             # calculate loss
-            labels = self._create_labels(responses.size())
+            labels = self._create_labels(responses.size(), batch[5])
             cls_loss = self.criterion(responses, labels)
             # dxywh = dxywh.detach().cpu().numpy()
+            dxywh = final_dxywh
+            xyxy = dxywh.clone()
             for k in range(dxywh.shape[0]):
-                dxywh[k][0] = dxywh[k][0] * (label_dxywh[k][2]-label_dxywh[k][0]) + (label_dxywh[k][2]+label_dxywh[k][0])/2
-                dxywh[k][1] = dxywh[k][1] * (label_dxywh[k][3]-label_dxywh[k][1]) + (label_dxywh[k][3]+label_dxywh[k][1])/2
-                dxywh[k][2] = torch.exp(dxywh[k][2]) * (label_dxywh[k][2]-label_dxywh[k][0])
-                dxywh[k][3] = torch.exp(dxywh[k][3]) * (label_dxywh[k][3]-label_dxywh[k][1])
-                if dxywh[k][2] <=0:
-                    dxywh[k][2] = label_dxywh[k][2]
-                if dxywh[k][3] <=0:
-                    dxywh[k][3] = label_dxywh[k][3]
-            for i in range(dxywh.shape[0]):
-                dxywh[i][0] -= dxywh[i][2]/2
-                dxywh[i][1] -= dxywh[i][3]/2
-                if dxywh[i][0] < 0:
-                    dxywh[i][0] = 0
-                if dxywh[i][1] < 0:
-                    dxywh[i][1] = 0
-                dxywh[i][2] += dxywh[i][0]
-                dxywh[i][3] += dxywh[i][1]
+                xyxy[k][0] = dxywh[k][0] * (label_xyxy[k][2]-label_xyxy[k][0]) + (label_xyxy[k][2]+label_xyxy[k][0])/2
+                xyxy[k][1] = dxywh[k][1] * (label_xyxy[k][3]-label_xyxy[k][1]) + (label_xyxy[k][3]+label_xyxy[k][1])/2
+                xyxy[k][2] = torch.exp(dxywh[k][2]) * (label_xyxy[k][2]-label_xyxy[k][0])
+                xyxy[k][3] = torch.exp(dxywh[k][3]) * (label_xyxy[k][3]-label_xyxy[k][1])
+                if xyxy[k][2] <=0:
+                    xyxy[k][2] = label_xyxy[k][2]
+                if xyxy[k][3] <=0:
+                    dxywh[k][3] = label_xyxy[k][3]
+            for i in range(xyxy.shape[0]):
+                xyxy[i][0] -= xyxy[i][2]/2
+                xyxy[i][1] -= xyxy[i][3]/2
+                if xyxy[i][0] < 0:
+                    xyxy[i][0] = 0
+                if xyxy[i][1] < 0:
+                    xyxy[i][1] = 0
+                xyxy[i][2] += xyxy[i][0]
+                xyxy[i][3] += xyxy[i][1]
             # dxywh = (dxywh - torch.min(dxywh)) / (torch.max(dxywh) - torch.min(dxywh))
             # xyxy = torch.autograd.Variable(torch.from_numpy(np.array(xyxy)).float(), requires_grad=True)
-            # reg_loss = self.reg_loss(dxywh.float(), label_dxywh.float())
 
-            # print(dxywh, label_dxywh)
-            reg_loss = self.giou_loss(dxywh, label_dxywh)
+            reg_loss1 = self.reg_loss(dxywh, label_dxywh)
+            # print(label_dxywh.shape)
+            gussian_loss = self.gussian_loss(dxywh, label_dxywh)
+            reg_loss2 = self.giou_loss(xyxy, label_xyxy)
             # print(reg_loss)
-            print('cls_loss ', cls_loss, 'reg_loss ', reg_loss)
-            # loss += reg_loss
+            print('cls_loss ', cls_loss, 'reg_loss1 ', reg_loss1, 'reg_loss2 ', reg_loss2, 'gussian_loss ', gussian_loss)
+            # print('cls_loss ', cls_loss, 'reg_loss1 ', reg_loss1, 'gussian_loss ', gussian_loss)
+            loss = reg_loss1 + reg_loss2 + cls_loss + gussian_loss
+            # loss = reg_loss1+cls_loss+gussian_loss
 
             if backward:
                 # back propagation
                 self.optimizer.zero_grad()
-                cls_loss.backward(retain_graph=True)
-                reg_loss.backward()
+                # cls_loss.backward(retain_graph=True)
+                # reg_loss1.backward(retain_graph=True)
+                # reg_loss2.backward()
+                loss.backward()
                 self.optimizer.step()
 
-        return (cls_loss+reg_loss).item(), template
+        return loss.item(), template
 
     @torch.enable_grad()
     def train_over(self, seqs, val_seqs=None,
@@ -482,10 +586,15 @@ class TrackerSiamFC(Tracker):
                     save_dir, 'siamfc_alexnet_eee%d.pth' % (epoch + 1))
                 torch.save(self.net.state_dict(), net_path)
 
-    def _create_labels(self, size):
+    def _create_labels(self, size, t):
         # skip if same sized labels already created
-        if hasattr(self, 'labels') and self.labels.size() == size:
-            return self.labels
+        # if hasattr(self, 'labels') and self.labels.size() == size:
+        if hasattr(self, 'labels'):
+            temp = []
+            for i in t:
+                temp.append(self.labels[i - 1])
+            temp = torch.from_numpy(np.array(temp)).to(self.device).float()
+            return temp
 
         def logistic_labels(x, y, r_pos, r_neg):
             dist = np.abs(x) + np.abs(y)  # block distance
@@ -496,6 +605,36 @@ class TrackerSiamFC(Tracker):
                                        np.zeros_like(x)))
             return labels
 
+        def move_up(matrix, dis=3):
+            matrix = matrix.copy()
+            tmp = matrix[dis:, :].copy()
+            matrix[-dis:, :] = matrix[:dis, :]
+            matrix[:-dis, :] = tmp
+            return matrix
+
+        def move_down(matrix, dis=3):
+            matrix = matrix.copy()
+            tmp = matrix[:-dis, :].copy()
+            matrix[:dis, :] = matrix[-dis:, :]
+            matrix[dis:, :] = tmp
+            return matrix
+
+        def move_left(matrix, dis=3):
+            matrix = matrix.copy()
+            tmp = matrix[:, dis:].copy()
+            matrix[:, -dis:] = matrix[:, :dis]
+            matrix[:, :-dis] = tmp
+            return matrix
+
+        def move_right(matrix, dis=3):
+            matrix = matrix.copy()
+            tmp = matrix[:, :-dis].copy()
+            matrix[:, :dis] = matrix[:, -dis:]
+            matrix[:, dis:] = tmp
+            return matrix
+
+        self.labels = [1,2,3,4,5,6,7,8,9]
+        self.labels_copy = self.labels.copy()
         # distances along x- and y-axis
         n, c, h, w = size
         x = np.arange(w) - (w - 1) / 2
@@ -507,11 +646,30 @@ class TrackerSiamFC(Tracker):
         r_neg = self.cfg.r_neg / self.cfg.total_stride
         labels = logistic_labels(x, y, r_pos, r_neg)
 
+        self.labels_copy[4] = labels
+        self.labels_copy[3] = move_left(self.labels_copy[4])
+        self.labels_copy[5] = move_right(self.labels_copy[4])
+        self.labels_copy[1] = move_up(labels)
+        self.labels_copy[0] = move_left(self.labels_copy[1])
+        self.labels_copy[2] = move_right(self.labels_copy[1])
+        self.labels_copy[7] = move_down(labels)
+        self.labels_copy[6] = move_left(self.labels_copy[7])
+        self.labels_copy[8] = move_right(self.labels_copy[7])
+
         # repeat to size
-        labels = labels.reshape((1, 1, h, w))
-        labels = np.tile(labels, (n, c, 1, 1))
+        # labels = labels.reshape((1, 1, h, w))
+        # labels = np.tile(labels, (n, c, 1, 1))
+        count = 0
+        for i in self.labels_copy:
+            i = i.reshape((1, h, w))
+            i = np.tile(i, (c, 1, 1))
+            self.labels[count] = i
+            count += 1
 
         # convert to tensors
-        self.labels = torch.from_numpy(labels).to(self.device).float()
-
-        return self.labels
+        # self.labels = torch.from_numpy(self.labels).to(self.device).float()
+        temp = []
+        for i in t:
+            temp.append(self.labels[i-1])
+        temp = torch.from_numpy(np.array(temp)).to(self.device).float()
+        return temp

@@ -43,13 +43,16 @@ class Pair(Dataset):
 
         z = cv2.imread(img_files[rand_z], cv2.IMREAD_COLOR)
         x = cv2.imread(img_files[rand_x], cv2.IMREAD_COLOR)
+        z_copy = cv2.imread(img_files[rand_z], cv2.IMREAD_COLOR)
         z = cv2.cvtColor(z, cv2.COLOR_BGR2RGB)
         x = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
+        z_copy = cv2.cvtColor(z_copy, cv2.COLOR_BGR2RGB)
         
         box_z = anno[rand_z]
         box_x = anno[rand_x]
 
-        item = (z, x, box_z, box_x)
+        t = np.random.randint(1,10)
+        item = (z, x, box_z, box_x, z_copy, t)
         if self.transforms is not None:
             item = self.transforms(*item)
         
@@ -70,7 +73,7 @@ class Pair(Dataset):
             for i in range(1000):
                 rand_z, rand_x = np.sort(
                     np.random.choice(indices, 2, replace=False))
-                if rand_x - rand_z < 10:
+                if rand_x - rand_z < 100:
                     break
             else:
                 rand_z = np.random.choice(indices)

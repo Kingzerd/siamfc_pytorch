@@ -1,111 +1,105 @@
 import numpy as np
 import os
 import torch
-# from siamfc.GIoUloss import GiouLoss
+import cv2
+print(round(130/16))
 
-# a = np.array([[[1,2],[3,4]]])
-# a = torch.from_numpy(a)
-# print(a,a.transpose(-2,-1))
-# a = np.random.randn(3,4)
-# print(a,a.shape)
+e = np.array([])
+print(e)
+
+def move_up(matrix, dis):
+    matrix = matrix.copy()
+    tmp = matrix[:,dis:].copy()
+    matrix[:, -dis:] = matrix[:, :dis]
+    matrix[:, :-dis] = tmp
+    return matrix
+
+response = np.array([[1,2,3,1],[3,5,4,2],[2,4,5,3]]).astype('uint8')
+print(response)
+res = move_up(response, 1)
+print(res)
+
+# r = response.copy()
+# for i in range(response.shape[0]):
+#     for j in range(response.shape[1]):
+#         r[i][j] = max(response[i]) + max(response.T[j])
+# print(r)
+r = cv2.resize(response, (6,6), interpolation=cv2.INTER_CUBIC)
+print(r)
 #
-# b = a[None,:]
-# print(b,b.shape)
+# if batch[5][cou] == 1:
+#     compute = dxywh[cou, :11, :11, :]
+# elif batch[5][cou] == 2:
+#     compute = dxywh[cou, :11, 3:14, :]
+# elif batch[5][cou] == 3:
+#     compute = dxywh[cou, :11, 6:, :]
+# elif batch[5][cou] == 4:
+#     compute = dxywh[cou, 3:14, :11, :]
+# elif batch[5][cou] == 6:
+#     compute = dxywh[cou, 3:14, 6:, :]
+# elif batch[5][cou] == 7:
+#     compute = dxywh[cou, 6:, :11, :]
+# elif batch[5][cou] == 8:
+#     compute = dxywh[cou, 6:, 3:14, :]
+# elif batch[5][cou] == 9:
+#     compute = dxywh[cou, 6:, 6:, :]
+# else:
+#     compute = dxywh[cou, 3:14, 3:14, :]
+
+# def Giou_loss(box_pre, box_gt, method='mean'):
+#     '''
+#     input:
+#     box_pre: shape(N, 4)
+#     predicted
+#     x1, y1, x2, y2
+#     box_gt: shape(N, 4)
+#     groundtruth
+#     x1, y1, x2, y2
+#     return:
+#     Giou
+#     loss
+#     '''
+#     assert box_pre.shape == box_gt.shape
 #
-# c = np.expand_dims(a,axis=0)
-# print(b.shape)
+#     # 并集区域坐标
+#     xx1 = torch.max(box_pre[:, 0], box_gt[:, 0])
+#     yy1 = torch.max(box_pre[:, 1], box_gt[:, 1])
+#     xx2 = torch.min(box_pre[:, 2], box_gt[:, 2])
+#     yy2 = torch.min(box_pre[:, 3], box_gt[:, 3])
 #
-# d = (a>0.5).astype(np.int32)
-# e = (a<=0.5).astype(np.int32)
+#     # 预测坐标面积
+#     box_pre_area = (box_pre[:, 2] - box_pre[:, 0] + 1) * (box_pre[:, 3] - box_pre[:, 1] + 1)
+#     # 标签坐标面积
+#     box_gt_area = (box_gt[:, 2] - box_gt[:, 0] + 1) * (box_gt[:, 3] - box_gt[:, 1] + 1)
+#     # inter 面积
+#     inter = (xx2 - xx1 + 1) * (yy2 - yy1 + 1)
+#     union = box_pre_area + box_gt_area - inter
+#     iou = inter / union
 #
-# print(d,e)
-# x = d.sum()
-# y = e.sum()
-# print(x,y)
-
-# coding = utf-8
-import torch
-
-
-def Giou_loss(box_pre, box_gt, method='mean'):
-    '''
-    input:
-    box_pre: shape(N, 4)
-    predicted
-    x1, y1, x2, y2
-    box_gt: shape(N, 4)
-    groundtruth
-    x1, y1, x2, y2
-    return:
-    Giou
-    loss
-    '''
-    assert box_pre.shape == box_gt.shape
-
-    # 并集区域坐标
-    xx1 = torch.max(box_pre[:, 0], box_gt[:, 0])
-    yy1 = torch.max(box_pre[:, 1], box_gt[:, 1])
-    xx2 = torch.min(box_pre[:, 2], box_gt[:, 2])
-    yy2 = torch.min(box_pre[:, 3], box_gt[:, 3])
-
-    # 预测坐标面积
-    box_pre_area = (box_pre[:, 2] - box_pre[:, 0] + 1) * (box_pre[:, 3] - box_pre[:, 1] + 1)
-    # 标签坐标面积
-    box_gt_area = (box_gt[:, 2] - box_gt[:, 0] + 1) * (box_gt[:, 3] - box_gt[:, 1] + 1)
-    # inter 面积
-    inter = (xx2 - xx1 + 1) * (yy2 - yy1 + 1)
-    union = box_pre_area + box_gt_area - inter
-    iou = inter / union
-
-    # 最小封闭形状坐标
-    xx1_c = torch.min(box_pre[:, 0], box_gt[:, 0])
-    yy1_c = torch.min(box_pre[:, 1], box_gt[:, 1])
-    xx2_c = torch.max(box_pre[:, 2], box_gt[:, 2])
-    yy2_c = torch.max(box_pre[:, 3], box_gt[:, 3])
-
-    # C面积
-    area_c = (xx2_c - xx1_c) * (yy2_c - yy1_c)
-
-    # Giou
-    giou = iou - (area_c - union) / area_c
-
-    giou_loss = 1 - giou
-
-    if (method == 'mean'):
-        return giou_loss.mean()
-    else:
-        return giou_loss.sum()
-
-x = torch.Tensor([[149.40,535.86,301.53,406.86]])
-y = torch.Tensor([[208,509,302,357]])
-cri = Giou_loss(x,y)
-print(cri)
-
-# x = torch.randn(2, 3, 3)
-# print(x)
-# x= x.flip(-1)
-# print(x)
-# x = x.permute(0, 2, 1)
-# print(x)
-
-
-# print(np.hanning(10))
-# print(np.outer(np.hanning(10),np.hanning(10)))
-
-# c = 0.5 * np.sum([100,200])
-# print(np.prod(np.array([100.,200.],dtype=np.float32)+150))
-
-# a = np.random.randn(3,2,4)
-# print(np.stack(a, axis=0)[:,-1].shape)
+#     # 最小封闭形状坐标
+#     xx1_c = torch.min(box_pre[:, 0], box_gt[:, 0])
+#     yy1_c = torch.min(box_pre[:, 1], box_gt[:, 1])
+#     xx2_c = torch.max(box_pre[:, 2], box_gt[:, 2])
+#     yy2_c = torch.max(box_pre[:, 3], box_gt[:, 3])
 #
-# b = np.array([[[1,2,3],[4,5,6],[1,2,3]],[[1,2,3],[4,5,6],[1,2,3]]])
-# print(np.argmax(np.amax(b,axis=(1,2))))
+#     # C面积
+#     area_c = (xx2_c - xx1_c) * (yy2_c - yy1_c)
+#
+#     # Giou
+#     giou = iou - (area_c - union) / area_c
+#
+#     giou_loss = 1 - giou
+#
+#     if (method == 'mean'):
+#         return giou_loss.mean()
+#     else:
+#         return giou_loss.sum()
+#
+# x = torch.Tensor([[149.40,535.86,301.53,406.86]])
+# y = torch.Tensor([[208,509,302,357]])
+# cri = Giou_loss(x,y)
+# print(cri)
 
-# x = np.arange(4) - (4 - 1) / 2
-# y = np.arange(4) - (4 - 1) / 2
-# print(x)
-# x, y = np.meshgrid(x, y)
-# print(np.meshgrid(x, y))
 
 # def listdir(path, list_name):
 #     for file in os.listdir(path):
@@ -126,28 +120,6 @@ print(cri)
 #         f.write(i+'\n')
 
 
-# a = np.load("tools/feature_num.npy")
-# b = 0
-# for i in range(a.shape[0]):
-#     b += a[i]
-# print(a)
-
-# from PIL import Image
-# from got10k.datasets import GOT10k
-# from got10k.utils.viz import show_frame
-#
-# dataset = GOT10k(root_dir='H:/datasets/GOT-10k', subset='train', return_meta=True)
-
-# print(dataset)
-# indices = np.random.permutation(len(dataset))
-# print(len(indices))
-# indexing
-# img_file, anno, meta = dataset[10]
-# print(anno[0])
-
-# print(len(img_file), len(anno))
-# print(anno[0])
-
 # for-loop
 # for s, (img_files, anno) in enumerate(dataset):
 #     seq_name = dataset.seq_names[s]
@@ -157,13 +129,7 @@ print(cri)
 #     for f, img_file in enumerate(img_files):
 #         image = Image.open(img_file)
 #         show_frame(image, anno[f, :])
-# a = np.array([[[1,1],[2,2]],[[2,2],[3,3]]])
-# print(np.where(a>1))
-# b = 1-(a==1)
-# print(b)
-# print(a[b])
-# a = a[::-1]
-# print(a)
+
 
 
 
